@@ -38,7 +38,11 @@ def main():
     a=parse_args(); log_path, log_file, original_stdout=start_log(a.log_dir); print(f'log_file={log_path}'); seed_all(a.seed); device=torch.device(a.device if a.device != 'cuda' or torch.cuda.is_available() else 'cpu')
     c=ModelConfig(); accum=max(1, math.ceil(a.effective_tokens/(a.micro_batch_size*c.context_length))); actual=a.micro_batch_size*accum*c.context_length
     train_ds=TokenStream(a.train_bin,c.context_length,a.micro_batch_size,a.seed); eval_ds=TokenStream(a.eval_bin,c.context_length,a.micro_batch_size,a.seed+1)
-    steps=math.ceil(len(train_ds)/accum)
+    # len(train_ds) is a count of individual sequences. The iterator yields
+    # microbatches, so account for micro_batch_size before grouping them into
+    # optimizer steps. Incomplete final microbatches/accumulations are dropped.
+    micro_batches=len(train_ds)//a.micro_batch_size
+    steps=micro_batches//accum
     if a.max_steps is not None: steps=min(steps,a.max_steps)
     if a.max_tokens is not None:
         if a.max_tokens <= 0: raise ValueError('--max-tokens must be positive')
