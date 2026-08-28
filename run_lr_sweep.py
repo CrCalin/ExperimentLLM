@@ -21,7 +21,8 @@ def parse_args():
     p.add_argument("--eval-batches", type=int, default=100)
     p.add_argument("--max-steps", type=int, default=None)
     p.add_argument("--max-tokens", type=int, default=50000000)
-    p.add_argument("--log-every", type=int, default=10)
+    p.add_argument("--log-every", type=int, default=50)
+    p.add_argument("--compile", action="store_true", help="Enable torch.compile for every run.")
     p.add_argument("--stop-on-error", action="store_true")
     return p.parse_args()
 
@@ -41,6 +42,7 @@ def main():
     ]
     if args.max_steps is not None: common += ["--max-steps", str(args.max_steps)]
     if args.max_tokens is not None: common += ["--max-tokens", str(args.max_tokens)]
+    if args.compile: common += ["--compile"]
 
     results = []
     train_script = Path(__file__).with_name("train.py")

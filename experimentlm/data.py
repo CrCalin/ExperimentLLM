@@ -6,14 +6,19 @@ class TokenStream(IterableDataset):
     def __init__(self, path, context_length, batch_size, seed=12345):
         self.path, self.context_length, self.batch_size, self.seed = path, context_length, batch_size, seed
         self.tokens = np.memmap(path, dtype=np.uint16, mode="r")
+        self.num_sequences = max(0, (len(self.tokens) - 1) // context_length)
+        # Generate the order once. This is identical on every iteration and
+        # preserves deterministic resume/replay behavior.
+        self.starts = np.arange(self.num_sequences, dtype=np.int64) * context_length
+        np.random.default_rng(seed).shuffle(self.starts)
+        self.batch_starts = self.starts[:(len(self.starts) // batch_size) * batch_size].reshape(-1, batch_size)
+        self.offsets = np.arange(context_length, dtype=np.int64)
     def __len__(self): return max(0, (len(self.tokens) - 1) // self.context_length)
     def __iter__(self):
-        n = len(self.tokens) - 1; usable = (n // self.context_length) * self.context_length
-        starts = np.arange(0, usable, self.context_length); rng = np.random.default_rng(self.seed)
-        rng.shuffle(starts)
-        for i in range(0, len(starts), self.batch_size):
-            s = starts[i:i+self.batch_size]
-            if len(s) < self.batch_size: continue
-            x = np.stack([self.tokens[j:j+self.context_length] for j in s]).astype(np.int64)
-            y = np.stack([self.tokens[j+1:j+self.context_length+1] for j in s]).astype(np.int64)
+        for starts in self.batch_starts:
+            indices = starts[:, None] + self.offsets[None, :]
+            # Vectorized indexing replaces one Python/memmap slice per
+            # sequence and produces the same [batch, context] layout.
+            x = np.take(self.tokens, indices).astype(np.int64, copy=False)
+            y = np.take(self.tokens, indices + 1).astype(np.int64, copy=False)
             yield torch.from_numpy(x), torch.from_numpy(y)

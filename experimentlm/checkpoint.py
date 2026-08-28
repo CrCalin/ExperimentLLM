@@ -5,7 +5,10 @@ from .model import ExperimentLM, ModelConfig
 
 def save_checkpoint(path, model, optimizer, scheduler, step, tokens_seen, config):
     path = Path(path); path.mkdir(parents=True, exist_ok=True)
-    torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "step": step, "tokens_seen": tokens_seen, "config": config.to_dict()}, path / "checkpoint.pt")
+    # torch.compile wraps the model and prefixes state-dict keys with
+    # "_orig_mod.". Save the underlying module so checkpoints load normally.
+    model_to_save = getattr(model, "_orig_mod", model)
+    torch.save({"model": model_to_save.state_dict(), "optimizer": optimizer.state_dict(), "scheduler": scheduler.state_dict(), "step": step, "tokens_seen": tokens_seen, "config": config.to_dict()}, path / "checkpoint.pt")
     (path / "config.json").write_text(json.dumps(config.to_dict(), indent=2))
 
 def load_checkpoint(path, device="cpu", model=None, optimizer=None, scheduler=None):

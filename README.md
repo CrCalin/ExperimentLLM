@@ -4,6 +4,7 @@ Small decoder-only causal LM matching the project baseline: 7-layer, 256-wide RM
 
 ```bash
 python3 train.py --device cuda --micro-batch-size 2 --lr 6e-4
+python3 train.py --device cuda --compile
 python3 generate.py --checkpoint checkpoints/10m/final --prompt "The future of language models is"
 python3 run_lr_sweep.py --max-steps 100 --micro-batch-size 2
 ```

@@ -14,6 +14,7 @@ class ModelConfig:
     n_heads: int = 4
     d_ff: int = 704
     rope_theta: float = 10000.0
+    compiled: bool = False  # runtime metadata; does not change the architecture
 
     @classmethod
     def from_dict(cls, d):
@@ -36,14 +37,15 @@ class CausalSelfAttention(nn.Module):
         super().__init__(); self.n_heads = c.n_heads; self.head_dim = c.d_model // c.n_heads
         self.qkv = nn.Linear(c.d_model, 3 * c.d_model, bias=False); self.out = nn.Linear(c.d_model, c.d_model, bias=False)
         inv = 1.0 / (c.rope_theta ** (torch.arange(0, self.head_dim, 2).float() / self.head_dim))
-        self.register_buffer("inv_freq", inv, persistent=False)
+        positions = torch.arange(c.context_length, dtype=inv.dtype)
+        freqs = torch.outer(positions, inv).repeat_interleave(2, dim=-1)
+        self.register_buffer("rope_cos", freqs.cos()[None, None], persistent=False)
+        self.register_buffer("rope_sin", freqs.sin()[None, None], persistent=False)
     def forward(self, x):
         b, t, _ = x.shape
         q, k, v = self.qkv(x).view(b, t, 3, self.n_heads, self.head_dim).unbind(2)
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-        pos = torch.arange(t, device=x.device, dtype=self.inv_freq.dtype)
-        freqs = torch.outer(pos, self.inv_freq); emb = freqs.repeat_interleave(2, dim=-1)
-        cos, sin = emb.cos()[None, None].to(x.dtype), emb.sin()[None, None].to(x.dtype)
+        cos, sin = self.rope_cos[:, :, :t].to(x.dtype), self.rope_sin[:, :, :t].to(x.dtype)
         q, k = q * cos + rotate_half(q) * sin, k * cos + rotate_half(k) * sin
         y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         return self.out(y.transpose(1, 2).contiguous().view(b, t, -1))
