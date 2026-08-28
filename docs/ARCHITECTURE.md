@@ -9,7 +9,7 @@ This is the orientation document for architecture and training work. Read it bef
 - There is one model construction path (`build_model`) and one training loop (`trainer.train`).
 - New architectures should normally require a class, a registry entry, and a config change—not a trainer change.
 - Checkpoints and result directories contain the fully resolved experiment config. Layer repeats and registered constructor defaults are expanded.
-- The controlled baseline is `configs/baseline.json`: 9,817,856 parameters, 7 layers, width 256, 4 heads, head dimension 64, SwiGLU width 704, RoPE, RMSNorm, untied embeddings, and no dropout.
+- The controlled baseline is `configs/standard_transformer_plus.json`: 10,161,920 parameters, 7 layers, width 256, 4 heads, head dimension 64, SwiGLU width 768, RoPE, RMSNorm, untied embeddings, and no dropout.
 - The historical baseline uses `ParallelResidual`: attention and MLP both consume the same incoming residual stream. `StandardResidual` is the conventional sequential attention-then-MLP form. Do not silently switch between them.
 
 ## Repository map
