@@ -2,17 +2,19 @@
 from transformers import PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutput
 import torch
-from experimentlm.model import ExperimentLM, ModelConfig
+from experimentlm.config import ModelConfig
+from experimentlm.model import build_model
 
 class ExperimentLMConfig(PretrainedConfig):
     model_type='experimentlm'
-    def __init__(self, **kwargs): super().__init__(**kwargs)
+    def __init__(self, experiment_model_config=None, **kwargs):
+        super().__init__(**kwargs); self.experiment_model_config=experiment_model_config
 
 class ExperimentLMForCausalLM(PreTrainedModel):
     config_class=ExperimentLMConfig; base_model_prefix='model'
     def __init__(self, config):
-        super().__init__(config); self.model=ExperimentLM(ModelConfig.from_dict(config.to_dict())); self.post_init()
+        super().__init__(config); self.model=build_model(ModelConfig.from_dict(config.experiment_model_config)); self.post_init()
     def forward(self, input_ids=None, labels=None, **kwargs):
-        logits, loss=self.model(input_ids,labels); return CausalLMOutput(loss=loss,logits=logits)
+        logits, loss=self.model(input_ids,labels,attention_mask=kwargs.get('attention_mask')); return CausalLMOutput(loss=loss,logits=logits)
     def get_input_embeddings(self): return self.model.wte
     def get_output_embeddings(self): return self.model.lm_head
