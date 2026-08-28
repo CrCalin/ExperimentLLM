@@ -36,7 +36,7 @@
     "validation_interval_steps": 250,
     "checkpoint_interval_steps": 500,
     "log_interval_steps": 250,
-    "compile": false
+    "compile": true
   },
   "data": {"train_bin": "train.bin", "eval_bin": "eval.bin"},
   "evaluation": {"validation_batches": 100},
