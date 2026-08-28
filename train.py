@@ -52,7 +52,9 @@ def main():
     # Replaying the already-consumed stream makes resume deterministic. This is
     # intentionally linear but is only paid once at startup.
     for _ in range(start * accum): next(train_iter)
-    progress = tqdm(range(start, steps), initial=start, total=steps, desc="Training", unit="step", dynamic_ncols=True, file=__import__('sys').stdout)
+    # Keep transient tqdm redraws out of the persistent log. Stable metrics
+    # printed below are still sent through the stdout tee.
+    progress = tqdm(range(start, steps), initial=start, total=steps, desc="Training", unit="step", dynamic_ncols=True, file=original_stdout)
     for step in progress:
         opt.zero_grad(set_to_none=True); loss_sum=0.; t0=time.perf_counter()
         for _ in range(accum):
