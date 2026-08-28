@@ -40,5 +40,5 @@
   },
   "data": {"train_bin": "train.bin", "eval_bin": "eval.bin"},
   "evaluation": {"validation_batches": 100},
-  "output": {"directory": "checkpoints/10m-standard", "log_directory": "logs/standard"}
+  "output": {"directory": "checkpoints/10m-standard", "log_directory": "logs/10m-standard"}
 }

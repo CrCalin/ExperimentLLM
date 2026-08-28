@@ -7,7 +7,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the configuration lifecyc
 ```bash
 python3 train.py --config configs/baseline.json --device cuda
 python3 train.py --config configs/standard_transformer.json --device cuda
-python3 train.py --config configs/standard_transformer_tied_10m.json --device cuda
+python3 train.py --config configs/standard_transformer_tied.json --device cuda
+python3 train.py --config configs/standard_transformer_deep.json --device cuda
+python3 train.py --config configs/standard_transformer_wide.json --device cuda
 python3 generate.py --checkpoint checkpoints/10m/final --prompt "The future of language models is"
 python3 run_lr_sweep.py --config configs/baseline.json
 ```
