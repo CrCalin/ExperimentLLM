@@ -63,7 +63,7 @@ The top-level sections are:
 - `training`: optimizer, schedule, precision, batching, stopping, logging, validation, and checkpoint intervals.
 - `data`: train/eval token-stream paths.
 - `evaluation`: number of validation batches; `0` means the complete stream.
-- `output`: checkpoint/results and log directories.
+- The config filename (without `.json`) is used beneath both `checkpoints/` and `logs/`.
 
 Every selectable implementation is represented as:
 
@@ -159,7 +159,7 @@ python train.py --config configs/baseline.json --device cuda
 The trainer logs parameter count, resolved model/training settings, optimizer/schedule, effective tokens per update, loss, LR, throughput, gradient norm, and peak VRAM. It writes:
 
 ```text
-<output.directory>/
+checkpoints/<config-filename>/
   config.json
   results.json
   step-<N>/

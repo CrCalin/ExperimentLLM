@@ -1,7 +1,7 @@
 """Validated JSON experiment configuration."""
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 import json
 from pathlib import Path
 from typing import Any
@@ -222,26 +222,16 @@ class EvaluationConfig:
 
 
 @dataclass(frozen=True)
-class OutputConfig:
-    directory: str = "checkpoints/10m"
-    log_directory: str = "logs"
-
-    def __post_init__(self):
-        if not self.directory or not isinstance(self.directory, str): raise ValueError("output.directory must be a non-empty string")
-        if not self.log_directory or not isinstance(self.log_directory, str): raise ValueError("output.log_directory must be a non-empty string")
-
-
-@dataclass(frozen=True)
 class ExperimentConfig:
     model: ModelConfig
     training: TrainingConfig
     data: DataConfig = field(default_factory=DataConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
-    output: OutputConfig = field(default_factory=OutputConfig)
+    name: str = field(default="experiment", repr=False, compare=False)
 
     @classmethod
     def from_dict(cls, value: JsonObject) -> "ExperimentConfig":
-        unknown = set(value) - {"model", "training", "data", "evaluation", "output"}
+        unknown = set(value) - {"model", "training", "data", "evaluation"}
         if unknown: raise ValueError(f"unknown experiment keys: {sorted(unknown)}")
         if "model" not in value or "training" not in value:
             raise ValueError("experiment requires model and training")
@@ -251,7 +241,7 @@ class ExperimentConfig:
         if legacy_context is not None and legacy_context != model.context_length:
             raise ValueError("training.context_length must match model.context_length")
         return cls(model, training, DataConfig(**value.get("data", {})),
-                   EvaluationConfig(**value.get("evaluation", {})), OutputConfig(**value.get("output", {})))
+                   EvaluationConfig(**value.get("evaluation", {})))
 
     @classmethod
     def load(cls, path: str | Path) -> "ExperimentConfig":
@@ -259,11 +249,11 @@ class ExperimentConfig:
             value = json.load(f)
         if not isinstance(value, dict): raise ValueError("experiment config root must be an object")
         from .resolution import resolve_experiment
-        return resolve_experiment(cls.from_dict(value))
+        return replace(resolve_experiment(cls.from_dict(value)), name=Path(path).stem)
 
     def to_dict(self) -> JsonObject:
         return {"model": self.model.to_dict(), "training": self.training.to_dict(),
-                "data": asdict(self.data), "evaluation": asdict(self.evaluation), "output": asdict(self.output)}
+                "data": asdict(self.data), "evaluation": asdict(self.evaluation)}
 
     def save(self, path: str | Path) -> None:
         Path(path).write_text(json.dumps(self.to_dict(), indent=2) + "\n", encoding="utf-8")

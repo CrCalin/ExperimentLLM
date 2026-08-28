@@ -16,9 +16,14 @@ def _legacy_model_config(value: dict) -> ModelConfig:
 
 def checkpoint_model_config(blob: dict) -> ModelConfig:
     if "experiment_config" in blob:
-        return ExperimentConfig.from_dict(blob["experiment_config"]).model
+        config = dict(blob["experiment_config"])
+        config.pop("output", None)  # Older checkpoints stored explicit output paths.
+        return ExperimentConfig.from_dict(config).model
     value = blob["config"]
-    if "model" in value: return ExperimentConfig.from_dict(value).model
+    if "model" in value:
+        value = dict(value)
+        value.pop("output", None)
+        return ExperimentConfig.from_dict(value).model
     return _legacy_model_config(value)
 
 

@@ -11,10 +11,10 @@ python3 train.py --config configs/standard_transformer_tied.json --device cuda
 python3 train.py --config configs/standard_transformer_deep.json --device cuda
 python3 train.py --config configs/standard_transformer_wide.json --device cuda
 python3 train.py --config configs/standard_transformer_wide_256.json --device cuda
-python3 generate.py --checkpoint checkpoints/10m/final --prompt "The future of language models is"
+python3 generate.py --checkpoint checkpoints/standard_transformer/final --prompt "The future of language models is"
 python3 run_lr_sweep.py --config configs/baseline.json
 ```
 
-Checkpoints contain `checkpoint.pt` and the fully resolved `config.json`; `generate.py` loads them directly. Use `--resume checkpoints/10m/step-500` to resume. Use `export_hf.py` to create a Transformers/lm-eval model directory.
+Checkpoints contain `checkpoint.pt` and the fully resolved `config.json`; `generate.py` loads them directly. Use `--resume checkpoints/standard_transformer/step-500` to resume. Run `export_hf.py --model checkpoints/standard_transformer/final` to create `benchmarks/standard_transformer`.
 
 `run_lr_sweep.py` derives per-run JSON configs for `3e-4`, `6e-4`, `1e-3`, and `2e-3` by default. Repeated input layers are expanded when configs are loaded and saved, so checkpoint configs contain the exact heterogeneous stack that ran.

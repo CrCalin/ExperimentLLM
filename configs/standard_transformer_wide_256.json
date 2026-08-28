@@ -39,6 +39,5 @@
     "compile": true
   },
   "data": {"train_bin": "train.bin", "eval_bin": "eval.bin"},
-  "evaluation": {"validation_batches": 100},
-  "output": {"directory": "checkpoints/10m-standard-wide-256", "log_directory": "logs/10m-standard-wide-256"}
+  "evaluation": {"validation_batches": 100}
 }

@@ -164,6 +164,21 @@ class StandardResidual(Residual):
 
 
 @RESIDUALS.register
+class GatedResidual(Residual):
+    """Sequential pre-norm residual branches with learned scalar gates."""
+    def __init__(self, attention_gate_init: float = 1.0, mlp_gate_init: float = 1.0):
+        super().__init__()
+        self.attention_gate = nn.Parameter(torch.tensor(float(attention_gate_init)))
+        self.mlp_gate = nn.Parameter(torch.tensor(float(mlp_gate_init)))
+
+    def forward(self, block: "TransformerBlock", x: torch.Tensor,
+                attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
+        if not block.pre_norm: raise ValueError("GatedResidual requires pre_norm=true")
+        x = x + self.attention_gate * block.attn(block.norm1(x), attention_mask, position_encoding)
+        return x + self.mlp_gate * block.mlp(block.norm2(x))
+
+
+@RESIDUALS.register
 class ParallelResidual(Residual):
     """Original ExperimentLM baseline: both branches consume the same residual stream."""
     def __init__(self): super().__init__()

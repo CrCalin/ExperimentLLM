@@ -36,10 +36,10 @@ def _seed_all(seed: int) -> None:
 
 def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | None = None) -> Path:
     config = resolve_experiment(config)
-    output = Path(config.output.directory)
+    output = Path("checkpoints") / config.name
     output.mkdir(parents=True, exist_ok=True)
     config.save(output / "config.json")
-    log_dir = Path(config.output.log_directory)
+    log_dir = Path("logs") / config.name
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"run-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.log"
     log_file = log_path.open("w", encoding="utf-8", buffering=1)

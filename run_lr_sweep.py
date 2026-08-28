@@ -27,9 +27,9 @@ def main():
         optimizer = replace(base.training.optimizer, args=base.training.optimizer.args | {"lr": lr})
         config = replace(
             base, training=replace(base.training, optimizer=optimizer),
-            output=replace(base.output, directory=str(run_dir), log_directory=str(run_dir / "logs")),
+            name=name,
         )
-        config_path = run_dir / "experiment.json"
+        config_path = run_dir / f"{name}.json"
         run_dir.mkdir(parents=True, exist_ok=True)
         config.save(config_path)
         print(f"[{index}/{len(args.lrs)}] Starting {name}", flush=True)
