@@ -66,6 +66,8 @@ def main():
         if (step+1)%250==0:
             vl,vp=evaluate(model,TokenStream(a.eval_bin,c.context_length,a.micro_batch_size,a.seed+2),device, None if a.eval_batches == 0 else a.eval_batches); print(f'validation step={step+1} loss={vl:.4f} perplexity={vp:.3f}',flush=True)
         if (step+1)%500==0: save_checkpoint(Path(a.out)/f'step-{step+1}',model,opt,sched,step+1,tokens_seen,c)
+    vl,vp=evaluate(model,TokenStream(a.eval_bin,c.context_length,a.micro_batch_size,a.seed+2),device,None if a.eval_batches == 0 else a.eval_batches)
+    print(f'validation final step={steps} loss={vl:.4f} perplexity={vp:.3f}',flush=True)
     save_checkpoint(Path(a.out)/'final',model,opt,sched,steps,tokens_seen,c)
     sys.stdout=original_stdout
     log_file.close()
