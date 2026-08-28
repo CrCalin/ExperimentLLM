@@ -8,6 +8,7 @@ from pathlib import Path
 import lm_eval
 import torch
 from tokenizers import Tokenizer
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM
 from experimentlm.data import TokenStream
 
@@ -58,15 +59,20 @@ def local_validation(model_path, validation_bin, device, batch_size, max_batches
     stream = TokenStream(validation_bin, context_length, batch_size, seed=12347)
     total_loss = 0.0
     total_tokens = 0
-    for index, (inputs, labels) in enumerate(stream):
-        if max_batches is not None and index >= max_batches:
-            break
-        inputs, labels = inputs.to(device), labels.to(device)
-        with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-            output = model(input_ids=inputs, labels=labels)
-        tokens = labels.numel()
-        total_loss += float(output.loss) * tokens
-        total_tokens += tokens
+    total_batches = len(stream.batch_starts)
+    if max_batches is not None:
+        total_batches = min(total_batches, max_batches)
+    with tqdm(total=total_batches, desc="Validation", unit="batch") as progress:
+        for index, (inputs, labels) in enumerate(stream):
+            if max_batches is not None and index >= max_batches:
+                break
+            inputs, labels = inputs.to(device), labels.to(device)
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                output = model(input_ids=inputs, labels=labels)
+            tokens = labels.numel()
+            total_loss += float(output.loss) * tokens
+            total_tokens += tokens
+            progress.update()
     del model
     if device.type == "cuda": torch.cuda.empty_cache()
     loss = total_loss / max(total_tokens, 1)
