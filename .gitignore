@@ -1,0 +1,6 @@
+.venv/
+smollm_500m.jsonl
+tokenizer.json
+*.bin
+__pycache__/
+*.py[cod]
