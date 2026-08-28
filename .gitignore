@@ -4,3 +4,6 @@ tokenizer.json
 *.bin
 __pycache__/
 *.py[cod]
+checkpoints/
+logs/
+sweeps/
