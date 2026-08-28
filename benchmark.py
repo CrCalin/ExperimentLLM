@@ -44,6 +44,8 @@ def parse_args():
         default="cuda:0",
     )
 
+    parser.add_argument("--trust-remote-code", action="store_true")
+
     parser.add_argument(
         "--output",
         default="benchmark_results.json",
@@ -86,6 +88,7 @@ def main():
             model="hf",
             model_args={
                 "pretrained": args.model,
+                "trust_remote_code": args.trust_remote_code,
             },
             tasks=[task],
             num_fewshot=0,
