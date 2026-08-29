@@ -28,7 +28,20 @@ class AdamW(OptimizerFactory):
         self.args = {"lr": lr, "betas": tuple(betas), "eps": eps, "weight_decay": weight_decay}
 
     def build(self, parameters: Iterable[torch.nn.Parameter]) -> torch.optim.Optimizer:
-        return torch.optim.AdamW(parameters, **self.args)
+        decay, no_decay = [], []
+        for parameter in parameters:
+            if not parameter.requires_grad:
+                continue
+            if parameter.ndim == 1 or getattr(parameter, "_no_weight_decay", False):
+                no_decay.append(parameter)
+            else:
+                decay.append(parameter)
+        groups = [
+            {"params": decay, "weight_decay": self.args["weight_decay"]},
+            {"params": no_decay, "weight_decay": 0.0},
+        ]
+        return torch.optim.AdamW(groups, **{key: value for key, value in self.args.items()
+                                            if key != "weight_decay"})
 
 
 class ScheduleFactory(ABC):

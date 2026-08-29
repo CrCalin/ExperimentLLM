@@ -11,7 +11,7 @@ from experimentlm.config import ExperimentConfig
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="configs/baseline.json")
+    parser.add_argument("--config", default="configs/standard_transformer_plus.json")
     parser.add_argument("--lrs", nargs="+", type=float, default=[3e-4, 6e-4, 1e-3, 2e-3])
     parser.add_argument("--output-root", default="sweeps/lr")
     parser.add_argument("--device", default="cuda")

@@ -1,0 +1,1 @@
+fla-core[rocm]==0.5.2

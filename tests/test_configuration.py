@@ -9,14 +9,14 @@ from experimentlm import ExperimentConfig, build_model
 from experimentlm.resolution import resolve_experiment
 
 
-BASELINE = Path(__file__).parents[1] / "configs" / "baseline.json"
+BASELINE = Path(__file__).parents[1] / "configs" / "standard_transformer_plus.json"
 
 
 class ConfigurationTests(unittest.TestCase):
     def test_baseline_is_expanded_and_parameter_stable(self):
         config = ExperimentConfig.load(BASELINE)
         self.assertEqual(len(config.model.layers), 7)
-        self.assertEqual(build_model(config.model).num_parameters, 9_817_856)
+        self.assertEqual(build_model(config.model).num_parameters, 10_161_920)
         self.assertNotIn("repeat", config.model.to_dict()["layers"][0])
 
     def test_heterogeneous_attention_and_residual_stack(self):

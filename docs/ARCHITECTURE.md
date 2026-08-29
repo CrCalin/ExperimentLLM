@@ -16,7 +16,7 @@ This is the orientation document for architecture and training work. Read it bef
 
 | Path | Responsibility |
 | --- | --- |
-| `configs/baseline.json` | Canonical baseline experiment and schema example |
+| `configs/standard_transformer_plus.json` | Canonical baseline experiment and schema example |
 | `experimentlm/config.py` | Validated internal config dataclasses and JSON parsing |
 | `experimentlm/resolution.py` | Registry validation, constructor-default expansion, repeat expansion output |
 | `experimentlm/registry.py` | Explicit registries; no dynamic imports |
@@ -153,7 +153,7 @@ The frozen streams currently contain 527,873,925 train tokens and 59,060,913 eva
 Run:
 
 ```bash
-python train.py --config configs/baseline.json --device cuda
+python train.py --config configs/standard_transformer_plus.json --device cuda
 ```
 
 The trainer logs parameter count, resolved model/training settings, optimizer/schedule, effective tokens per update, loss, LR, throughput, gradient norm, and peak VRAM. It writes:
@@ -191,4 +191,4 @@ python -m unittest tests/test_configuration.py
 
 For trainer changes, use a tiny temporary model and token stream before considering a full baseline run. Full baseline training processes roughly 528M train tokens and is not an appropriate smoke test.
 
-When an intentional architecture change alters baseline parameter count, state-dict compatibility, residual semantics, data order, or update accounting, document it explicitly and use a new experiment config rather than silently changing `configs/baseline.json`.
+When an intentional architecture change alters baseline parameter count, state-dict compatibility, residual semantics, data order, or update accounting, document it explicitly and use a new experiment config rather than silently changing `configs/standard_transformer_plus.json`.

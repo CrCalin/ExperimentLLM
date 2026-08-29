@@ -24,6 +24,15 @@ def _layer(layer: LayerSpec) -> LayerSpec:
         for key, (registry, injected) in mappings.items():
             spec = ComponentSpec.from_dict(args[key], f"{layer.class_name}.args.{key}")
             args[key] = _component(spec, registry, injected).to_dict()
+    elif layer.class_name == "DoubleNormTransformerBlock":
+        mappings = {
+            key: (NORMS, {"dim"})
+            for key in ("pre_attn_norm", "post_attn_norm", "pre_mlp_norm", "post_mlp_norm")
+        }
+        mappings.update({"attention": (ATTENTIONS, {"d_model"}), "mlp": (MLPS, {"d_model"})})
+        for key, (registry, injected) in mappings.items():
+            spec = ComponentSpec.from_dict(args[key], f"{layer.class_name}.args.{key}")
+            args[key] = _component(spec, registry, injected).to_dict()
     return replace(layer, args=args)
 
 
