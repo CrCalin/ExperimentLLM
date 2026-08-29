@@ -3,10 +3,12 @@
 import argparse
 import json
 import math
+import time
 from pathlib import Path
 
 import lm_eval
 import torch
+from lm_eval.models.huggingface import HFLM
 from tokenizers import Tokenizer
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM
@@ -20,6 +22,11 @@ DEFAULT_TASKS = [
     "boolq",
     "lambada_openai",
 ]
+
+
+def format_duration(seconds):
+    """Format elapsed wall-clock seconds for human-readable output."""
+    return f"{seconds:.2f}s"
 
 
 def normalize_lambada_metrics(result, task_result, model_path):
@@ -49,10 +56,16 @@ def normalize_lambada_metrics(result, task_result, model_path):
 
 
 @torch.inference_mode()
-def local_validation(model_path, validation_bin, device, batch_size, max_batches):
-    model = AutoModelForCausalLM.from_pretrained(
-        str(model_path), trust_remote_code=True
-    ).to(device).eval()
+def local_validation(
+    model_path, validation_bin, device, batch_size, max_batches, model=None
+):
+    owns_model = model is None
+    if owns_model:
+        model = AutoModelForCausalLM.from_pretrained(
+            str(model_path), trust_remote_code=True
+        ).to(device).eval()
+    else:
+        model = model.to(device).eval()
     config = model.config
     model_config = getattr(config, "experiment_model_config", {}) or {}
     context_length = model_config.get("context_length", getattr(config, "context_length", 2048))
@@ -73,8 +86,9 @@ def local_validation(model_path, validation_bin, device, batch_size, max_batches
             total_loss += float(output.loss) * tokens
             total_tokens += tokens
             progress.update()
-    del model
-    if device.type == "cuda": torch.cuda.empty_cache()
+    if owns_model:
+        del model
+        if device.type == "cuda": torch.cuda.empty_cache()
     loss = total_loss / max(total_tokens, 1)
     return loss, math.exp(min(loss, 20.0)), total_tokens
 
@@ -100,6 +114,13 @@ def parse_args():
         "--batch-size",
         default="auto",
         help='Batch size, e.g. "auto", 8, 16, 32',
+    )
+
+    parser.add_argument(
+        "--mixed-precision",
+        choices=["bfloat16", "float16", "none"],
+        default="bfloat16",
+        help="Autocast dtype for lm-eval model calls.",
     )
 
     parser.add_argument(
@@ -138,6 +159,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    total_start = time.perf_counter()
 
     tasks = DEFAULT_TASKS if "all" in args.tasks else args.tasks
 
@@ -152,34 +174,57 @@ def main():
     print()
 
     device = torch.device(args.device)
-    validation_limit = None if args.validation_batches == 0 else args.validation_batches
-    validation_loss, validation_ppl, validation_tokens = local_validation(
-        model_path, args.validation_bin, device, args.validation_batch_size, validation_limit
+    mixed_precision_dtype = {
+        "bfloat16": torch.bfloat16,
+        "float16": torch.float16,
+        "none": None,
+    }[args.mixed_precision]
+    benchmark_model = HFLM(
+        pretrained=args.model,
+        trust_remote_code=args.trust_remote_code,
+        batch_size=args.batch_size,
+        device=args.device,
+        mixed_precision_dtype=mixed_precision_dtype,
     )
+
+    validation_limit = None if args.validation_batches == 0 else args.validation_batches
+    validation_start = time.perf_counter()
+    validation_loss, validation_ppl, validation_tokens = local_validation(
+        model_path,
+        args.validation_bin,
+        device,
+        args.validation_batch_size,
+        validation_limit,
+        model=benchmark_model.model,
+    )
+    validation_seconds = time.perf_counter() - validation_start
     validation_result = {
         "loss": validation_loss,
         "perplexity": validation_ppl,
         "tokens": validation_tokens,
     }
     all_results["validation"] = validation_result
+    all_results["timing"] = {
+        "validation_seconds": validation_seconds,
+        "benchmark_seconds": {},
+    }
     print("Local validation:")
     print(f"  loss                       {validation_loss:.6f}")
     print(f"  perplexity                 {validation_ppl:.6f}")
     print(f"  tokens                     {validation_tokens:,}")
+    print(f"  time                       {format_duration(validation_seconds)}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w") as f: json.dump(all_results, f, indent=2, default=str)
 
+    task_seconds = {}
     for i, task in enumerate(tasks, 1):
         print("=" * 70)
         print(f"[{i}/{len(tasks)}] {task}")
         print("=" * 70)
 
+        task_start = time.perf_counter()
         result = lm_eval.simple_evaluate(
-            model="hf",
-            model_args={
-                "pretrained": args.model,
-                "trust_remote_code": args.trust_remote_code,
-            },
+            model=benchmark_model,
             tasks=[task],
             num_fewshot=0,
             batch_size=args.batch_size,
@@ -187,11 +232,12 @@ def main():
             limit=args.limit,
             log_samples=task == "lambada_openai",
         )
-
         task_result = result["results"][task]
         if task == "lambada_openai":
             normalize_lambada_metrics(result, task_result, model_path)
+        task_seconds[task] = time.perf_counter() - task_start
         all_results[task] = task_result
+        all_results["timing"]["benchmark_seconds"] = task_seconds
 
         print()
         print(f"{task} results:")
@@ -216,12 +262,24 @@ def main():
     print("=" * 70)
 
     for task, metrics in all_results.items():
+        if task == "timing":
+            continue
         print(f"\n{task}")
 
         for key, value in metrics.items():
             if isinstance(value, (int, float)):
                 print(f"  {key:25} {value:.6f}")
 
+    total_seconds = time.perf_counter() - total_start
+    all_results["timing"]["total_seconds"] = total_seconds
+    with output_path.open("w") as f:
+        json.dump(all_results, f, indent=2, default=str)
+
+    print("\nTiming")
+    print(f"  validation                 {format_duration(validation_seconds)}")
+    for task in tasks:
+        print(f"  {task:25} {format_duration(task_seconds[task])}")
+    print(f"  total                      {format_duration(total_seconds)}")
     print(f"\nSaved to {output_path}")
 
 

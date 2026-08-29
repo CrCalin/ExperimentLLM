@@ -11,7 +11,7 @@ from experimentlm.model import DeltaNetLinearAttention, _gdn_recurrence
 from experimentlm.optim import build_optimizer, build_schedule
 
 
-OPTIMIZED_CONFIG = Path(__file__).parents[1] / "configs" / "hybrid_deltanet_transformer_expandv1_optimized.json"
+OPTIMIZED_CONFIG = Path(__file__).parents[1] / "configs" / "hybrid_deltanet_transformer.json"
 CONFIG = OPTIMIZED_CONFIG
 
 

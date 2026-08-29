@@ -173,37 +173,6 @@ class MultiHeadCausalSelfAttention(Attention):
         return output, (k, v)
 
 
-class CausalDepthwiseConv1d(nn.Module):
-    """Portable equivalent of FLA's causal depthwise short convolution."""
-    def __init__(self, hidden_size: int, kernel_size: int = 4, bias: bool = False):
-        super().__init__()
-        if kernel_size < 1: raise ValueError("convolution kernel_size must be positive")
-        self.hidden_size, self.kernel_size = hidden_size, kernel_size
-        self.weight = nn.Parameter(torch.empty(hidden_size, 1, kernel_size))
-        self.bias = nn.Parameter(torch.empty(hidden_size)) if bias else None
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        nn.init.normal_(self.weight, mean=0.0, std=0.02)
-        if self.bias is not None: nn.init.zeros_(self.bias)
-
-    def forward(self, x: torch.Tensor, cache: torch.Tensor | None = None,
-                output_final_state: bool = False) -> tuple[torch.Tensor, torch.Tensor | None]:
-        sequence = x.transpose(1, 2)
-        if cache is not None:
-            expected = (x.size(0), self.hidden_size, self.kernel_size - 1)
-            if cache.shape != expected:
-                raise ValueError(f"convolution cache must have shape {expected}")
-            sequence = torch.cat((cache, sequence), dim=-1)
-        y = F.conv1d(
-            F.pad(sequence, (self.kernel_size - 1, 0)), self.weight,
-            self.bias, groups=self.hidden_size,
-        )
-        y = y[..., -x.size(1):].transpose(1, 2)
-        new_cache = sequence[..., -(self.kernel_size - 1):] if self.kernel_size > 1 else sequence[..., :0]
-        return F.silu(y), new_cache if output_final_state else None
-
-
 class GatedRMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-5):
         super().__init__()
@@ -263,19 +232,22 @@ class DeltaNetLinearAttention(Attention):
         if not math.isclose(head_dim * expand_v, self.head_v_dim):
             raise ValueError("expand_v must produce an integer value head dimension")
 
-        self.q_proj = nn.Linear(d_model, self.key_dim, bias=False)
-        self.k_proj = nn.Linear(d_model, self.key_dim, bias=False)
-        self.v_proj = nn.Linear(d_model, self.value_dim, bias=False)
-        self.a_proj = nn.Linear(d_model, self.num_v_heads, bias=False)
-        self.b_proj = nn.Linear(d_model, self.num_v_heads, bias=False)
+        self.projection_sizes = (
+            self.key_dim, self.key_dim, self.value_dim,
+            self.num_v_heads, self.num_v_heads, self.value_dim,
+        )
+        self.in_proj_weight = nn.Parameter(torch.empty(sum(self.projection_sizes), d_model))
+        nn.init.normal_(self.in_proj_weight, mean=0.0, std=0.02)
         self.A_log = nn.Parameter(torch.empty(self.num_v_heads))
         self.dt_bias = nn.Parameter(torch.empty(self.num_v_heads))
         self.A_log._no_weight_decay = True
         self.dt_bias._no_weight_decay = True
-        self.q_conv1d = CausalDepthwiseConv1d(self.key_dim, conv_size, conv_bias)
-        self.k_conv1d = CausalDepthwiseConv1d(self.key_dim, conv_size, conv_bias)
-        self.v_conv1d = CausalDepthwiseConv1d(self.value_dim, conv_size, conv_bias)
-        self.g_proj = nn.Linear(d_model, self.value_dim, bias=False)
+        if conv_bias:
+            raise ValueError("the optimized GatedDeltaNet path requires conv_bias=false")
+        self.conv_weight = nn.Parameter(torch.empty(
+            2 * self.key_dim + self.value_dim, 1, conv_size,
+        ))
+        nn.init.normal_(self.conv_weight, mean=0.0, std=0.02)
         self.o_norm = GatedRMSNorm(self.head_v_dim, norm_eps)
         self.o_proj = nn.Linear(self.value_dim, d_model, bias=False)
         self.o_proj.residual_projection = True
@@ -283,12 +255,34 @@ class DeltaNetLinearAttention(Attention):
 
     def reset_specialized_parameters(self):
         with torch.no_grad():
+            nn.init.normal_(self.in_proj_weight, mean=0.0, std=0.02)
+            nn.init.normal_(self.conv_weight, mean=0.0, std=0.02)
             A = torch.empty(self.num_v_heads, dtype=torch.float32).uniform_(0, 16)
             self.A_log.copy_(torch.log(A))
             dt = torch.exp(torch.empty(self.num_v_heads).uniform_(math.log(0.001), math.log(0.1)))
             self.dt_bias.copy_(dt + torch.log(-torch.expm1(-dt)))
-        for conv in (self.q_conv1d, self.k_conv1d, self.v_conv1d):
-            if conv is not None: conv.reset_parameters()
+
+    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
+                               missing_keys, unexpected_keys, error_msgs):
+        packed_key = prefix + "in_proj_weight"
+        if packed_key not in state_dict:
+            old_keys = tuple(prefix + name for name in (
+                "q_proj.weight", "k_proj.weight", "v_proj.weight",
+                "a_proj.weight", "b_proj.weight", "g_proj.weight",
+            ))
+            if all(key in state_dict for key in old_keys):
+                state_dict[packed_key] = torch.cat(tuple(state_dict.pop(key) for key in old_keys), dim=0)
+        conv_key = prefix + "conv_weight"
+        if conv_key not in state_dict:
+            old_keys = tuple(prefix + name for name in (
+                "q_conv1d.weight", "k_conv1d.weight", "v_conv1d.weight",
+            ))
+            if all(key in state_dict for key in old_keys):
+                state_dict[conv_key] = torch.cat(tuple(state_dict.pop(key) for key in old_keys), dim=0)
+        super()._load_from_state_dict(
+            state_dict, prefix, local_metadata, strict,
+            missing_keys, unexpected_keys, error_msgs,
+        )
 
     def initial_state(self, x: torch.Tensor, dtype: torch.dtype | None = None) -> torch.Tensor:
         return x.new_zeros(x.size(0), self.num_v_heads, self.head_v_dim, self.head_dim,
@@ -315,22 +309,18 @@ class DeltaNetLinearAttention(Attention):
         output_final_state: bool,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None]:
         """Apply the three depthwise short convolutions as one grouped convolution."""
-        convolutions = (self.q_conv1d, self.k_conv1d, self.v_conv1d)
         old = conv_state or (None, None, None)
         sequence = qkv.transpose(1, 2)
         if any(cache is not None for cache in old):
             if any(cache is None for cache in old):
                 raise ValueError("all q/k/v convolution caches must be provided together")
-            for cache, convolution in zip(old, convolutions):
-                expected = (qkv.size(0), convolution.hidden_size, convolution.kernel_size - 1)
+            for cache, hidden_size in zip(old, (self.key_dim, self.key_dim, self.value_dim)):
+                expected = (qkv.size(0), hidden_size, self.conv_size - 1)
                 if cache.shape != expected:
                     raise ValueError(f"convolution cache must have shape {expected}")
             sequence = torch.cat((torch.cat(old, dim=1), sequence), dim=-1)
-        weight = torch.cat(tuple(convolution.weight for convolution in convolutions), dim=0)
-        biases = tuple(convolution.bias for convolution in convolutions)
-        bias = None if all(item is None for item in biases) else torch.cat(biases)
         y = F.conv1d(
-            F.pad(sequence, (self.conv_size - 1, 0)), weight, bias,
+            F.pad(sequence, (self.conv_size - 1, 0)), self.conv_weight, None,
             groups=sequence.size(1),
         )
         y = F.silu(y[..., -qkv.size(1):].transpose(1, 2))
@@ -354,21 +344,12 @@ class DeltaNetLinearAttention(Attention):
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None]:
         batch, length, _ = x.shape
         new_conv_state = None
-        projection_weights = [self.q_proj.weight, self.k_proj.weight, self.v_proj.weight,
-                              self.a_proj.weight, self.b_proj.weight, self.g_proj.weight]
-        projection_sizes = [self.key_dim, self.key_dim, self.value_dim,
-                            self.num_v_heads, self.num_v_heads, self.value_dim]
-        projected = F.linear(x, torch.cat(projection_weights, dim=0))
-        q, k, v, a, beta, gate = torch.split(projected, projection_sizes, dim=-1)
+        projected = F.linear(x, self.in_proj_weight)
+        q, k, v, a, beta, gate = torch.split(projected, self.projection_sizes, dim=-1)
         qkv = projected[..., :2 * self.key_dim + self.value_dim]
         if fla_causal_conv1d is not None and x.is_cuda and not use_cache and conv_state is None:
-            conv_weight = torch.cat((
-                self.q_conv1d.weight, self.k_conv1d.weight, self.v_conv1d.weight,
-            ), dim=0).squeeze(1)
-            conv_biases = (self.q_conv1d.bias, self.k_conv1d.bias, self.v_conv1d.bias)
-            conv_bias = None if all(item is None for item in conv_biases) else torch.cat(conv_biases)
             qkv, _ = fla_causal_conv1d(
-                qkv, weight=conv_weight, bias=conv_bias,
+                qkv, weight=self.conv_weight.squeeze(1), bias=None,
                 activation="silu", backend="triton",
             )
         else:
