@@ -6,7 +6,7 @@ from dataclasses import replace
 from .config import ComponentSpec, ExperimentConfig, LayerSpec
 from .registry import (
     ATTENTIONS, BLOCKS, EMBEDDINGS, HEADS, INITIALIZATIONS, MLPS, MODELS,
-    NORMS, OPTIMIZERS, POSITIONS, RESIDUALS, SCHEDULES,
+    NORMS, OPTIMIZERS, POSITIONS, RESIDUALS, ROUTINGS, SCHEDULES,
 )
 
 
@@ -24,6 +24,9 @@ def _layer(layer: LayerSpec) -> LayerSpec:
         for key, (registry, injected) in mappings.items():
             spec = ComponentSpec.from_dict(args[key], f"{layer.class_name}.args.{key}")
             args[key] = _component(spec, registry, injected).to_dict()
+        if args["value_routing"] is not None:
+            spec = ComponentSpec.from_dict(args["value_routing"], f"{layer.class_name}.args.value_routing")
+            args["value_routing"] = _component(spec, ROUTINGS, {"value_dim", "d_model"}).to_dict()
         if args["mlp"] is not None:
             spec = ComponentSpec.from_dict(args["mlp"], f"{layer.class_name}.args.mlp")
             args["mlp"] = _component(spec, MLPS, {"d_model"}).to_dict()

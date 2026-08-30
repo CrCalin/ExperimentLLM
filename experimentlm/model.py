@@ -33,7 +33,7 @@ def _run_fused_recurrent_gated_delta_rule(**kwargs):
 from .config import ComponentSpec, ModelConfig
 from .registry import (
     ATTENTIONS, BLOCKS, EMBEDDINGS, HEADS, INITIALIZATIONS, MLPS, MODELS,
-    NORMS, POSITIONS, RESIDUALS,
+    NORMS, POSITIONS, RESIDUALS, ROUTINGS,
 )
 from .parameter_policy import set_optimizer_policy
 
@@ -58,6 +58,10 @@ class Attention(nn.Module, ABC):
     @abstractmethod
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor: ...
+
+    def forward_with_route(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
+                           position_encoding: PositionEncoding):
+        return self.forward(x, attention_mask, position_encoding), None
 
 
 class MLP(nn.Module, ABC):
@@ -139,7 +143,8 @@ class RoPE(PositionEncoding):
 @ATTENTIONS.register
 class MultiHeadCausalSelfAttention(Attention):
     def __init__(self, d_model: int, n_heads: int, head_dim: int | None = None,
-                 bias: bool = False, dropout: float = 0.0):
+                 bias: bool = False, dropout: float = 0.0,
+                 qk_norm: bool = False, qk_norm_eps: float = 1e-6):
         super().__init__()
         self.n_heads = n_heads
         self.head_dim = head_dim or d_model // n_heads
@@ -150,12 +155,20 @@ class MultiHeadCausalSelfAttention(Attention):
         self.qkv = nn.Linear(d_model, 3 * d_model, bias=bias)
         self.out = nn.Linear(d_model, d_model, bias=bias)
         self.out.residual_projection = True
+        self.q_norm = RMSNorm(self.head_dim, qk_norm_eps) if qk_norm else None
+        self.k_norm = RMSNorm(self.head_dim, qk_norm_eps) if qk_norm else None
+
+    def _normalize_qk(self, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.q_norm is not None:
+            q, k = self.q_norm(q), self.k_norm(k)
+        return q, k
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor:
         batch, length, _ = x.shape
         q, k, v = self.qkv(x).view(batch, length, 3, self.n_heads, self.head_dim).unbind(2)
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
+        q, k = self._normalize_qk(q, k)
         q, k = position_encoding.apply(q, k)
         dropout = self.dropout if self.training else 0.0
         if attention_mask is None:
@@ -175,6 +188,7 @@ class MultiHeadCausalSelfAttention(Attention):
         q, k, v = self.qkv(x).view(batch, length, 3, self.n_heads, self.head_dim).unbind(2)
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
         offset = 0 if past is None else past[0].size(-2)
+        q, k = self._normalize_qk(q, k)
         q, k = position_encoding.apply(q, k, offset)
         if past is not None:
             k = torch.cat((past[0], k), dim=-2)
@@ -306,13 +320,15 @@ class DeltaNetLinearAttention(Attention):
     def __init__(self, d_model: int, n_heads: int, head_dim: int = 256,
                  expand_v: float = 2.0, num_v_heads: int | None = None,
                  allow_neg_eigval: bool = False, conv_size: int = 4,
-                 conv_bias: bool = False, norm_eps: float = 1e-5):
+                 conv_bias: bool = False, norm_eps: float = 1e-5,
+                 return_value_route: bool = False):
         super().__init__()
         if n_heads <= 0 or head_dim <= 0 or expand_v <= 0:
             raise ValueError("invalid GatedDeltaNet head configuration")
         self.hidden_size, self.n_heads, self.head_dim = d_model, n_heads, head_dim
         self.expand_v, self.num_v_heads = expand_v, num_v_heads or n_heads
         self.allow_neg_eigval, self.conv_size = allow_neg_eigval, conv_size
+        self.return_value_route = return_value_route
         self.chunk_size = 16
         self.key_dim = n_heads * head_dim
         self.head_v_dim = int(head_dim * expand_v)
@@ -388,7 +404,7 @@ class DeltaNetLinearAttention(Attention):
         attention_mask: torch.Tensor | None = None,
         conv_state: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None]:
-        output, state, conv_state = self._forward_impl(
+        output, state, conv_state, _ = self._forward_impl(
             x, state, attention_mask, output_final_state=True,
             conv_state=conv_state, use_cache=True,
         )
@@ -434,7 +450,7 @@ class DeltaNetLinearAttention(Attention):
         output_final_state: bool,
         conv_state: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None,
         use_cache: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None, torch.Tensor | None]:
         batch, length, _ = x.shape
         new_conv_state = None
         projected = F.linear(x, self.in_proj_weight)
@@ -453,6 +469,7 @@ class DeltaNetLinearAttention(Attention):
         q = q.view(batch, length, self.n_heads, self.head_dim)
         k = k.view(batch, length, self.n_heads, self.head_dim)
         v = v.view(batch, length, self.num_v_heads, self.head_v_dim)
+        value_route = v.reshape(batch, length, self.value_dim) if self.return_value_route else None
         if attention_mask is not None:
             if attention_mask.shape != (batch, length):
                 raise ValueError("attention_mask must have shape (batch, sequence)")
@@ -515,16 +532,45 @@ class DeltaNetLinearAttention(Attention):
         else:
             y = self.o_norm(normalized, gate)
         output = self.o_proj(y.reshape(batch, length, self.value_dim))
-        return output, state, new_conv_state
+        return output, state, new_conv_state, value_route
 
     def forward_cached(self, x: torch.Tensor, state: torch.Tensor | None = None,
                        conv_state: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None):
+        output, state, conv_state, _ = self._forward_impl(x, state, None, True, conv_state, True)
+        return output, state, conv_state
+
+    def forward_cached_with_route(self, x: torch.Tensor, state: torch.Tensor | None = None,
+                                  conv_state: tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None = None):
         return self._forward_impl(x, state, None, True, conv_state, True)
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor:
-        output, _, _ = self._forward_impl(x, None, attention_mask, False)
+        output, _, _, _ = self._forward_impl(x, None, attention_mask, False)
         return output
+
+    def forward_with_route(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
+                           position_encoding: PositionEncoding):
+        output, _, _, value_route = self._forward_impl(x, None, attention_mask, False)
+        return output, value_route
+
+
+@ROUTINGS.register
+class LowRankValueRouting(nn.Module):
+    def __init__(self, value_dim: int, d_model: int, rank: int, zero_init_output: bool = True,
+                 placement: str = "pre_ffn"):
+        super().__init__()
+        if value_dim <= 0 or d_model <= 0 or rank <= 0:
+            raise ValueError("value routing dimensions and rank must be positive")
+        if placement not in {"pre_ffn", "post_block"}:
+            raise ValueError("value routing placement must be pre_ffn or post_block")
+        self.placement = placement
+        self.down = nn.Linear(value_dim, rank, bias=False)
+        self.up = nn.Linear(rank, d_model, bias=False)
+        if zero_init_output:
+            self.up.zero_init_output = True
+
+    def forward(self, value: torch.Tensor) -> torch.Tensor:
+        return self.up(self.down(value))
 
 
 @MLPS.register
@@ -551,8 +597,13 @@ class StandardResidual(Residual):
     def forward(self, block: "TransformerBlock", x: torch.Tensor,
                 attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
         if block.pre_norm:
-            x = x + block.attn(block.norm1(x), attention_mask, position_encoding)
-            return x if block.mlp is None else x + block.mlp(block.norm2(x))
+            attn, route = block.attention_with_route(block.norm1(x), attention_mask, position_encoding)
+            x = x + attn
+            x = block.add_value_route(x, route, "pre_ffn")
+            if block.mlp is None:
+                return block.add_value_route(x, route, "post_block")
+            x = x + block.mlp(block.norm2(x))
+            return block.add_value_route(x, route, "post_block")
         x = block.norm1(x + block.attn(x, attention_mask, position_encoding))
         return x if block.mlp is None else block.norm2(x + block.mlp(x))
 
@@ -571,10 +622,13 @@ class GatedResidual(Residual):
     def forward(self, block: "TransformerBlock", x: torch.Tensor,
                 attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
         if not block.pre_norm: raise ValueError("GatedResidual requires pre_norm=true")
-        x = x + self.attention_gate * block.attn(block.norm1(x), attention_mask, position_encoding)
+        attn, route = block.attention_with_route(block.norm1(x), attention_mask, position_encoding)
+        x = x + self.attention_gate * attn
+        x = block.add_value_route(x, route, "pre_ffn")
         if block.mlp is None:
-            return x
-        return x + self.mlp_gate * block.mlp(block.norm2(x))
+            return block.add_value_route(x, route, "post_block")
+        x = x + self.mlp_gate * block.mlp(block.norm2(x))
+        return block.add_value_route(x, route, "post_block")
 
 
 @RESIDUALS.register
@@ -585,14 +639,19 @@ class ParallelResidual(Residual):
     def forward(self, block: "TransformerBlock", x: torch.Tensor,
                 attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
         if not block.pre_norm: raise ValueError("ParallelResidual currently requires pre_norm=true")
-        x = x + block.attn(block.norm1(x), attention_mask, position_encoding)
-        return x if block.mlp is None else x + block.mlp(block.norm2(x))
+        attn, route = block.attention_with_route(block.norm1(x), attention_mask, position_encoding)
+        x = x + attn
+        x = block.add_value_route(x, route, "pre_ffn")
+        if block.mlp is None:
+            return block.add_value_route(x, route, "post_block")
+        x = x + block.mlp(block.norm2(x))
+        return block.add_value_route(x, route, "post_block")
 
 
 @BLOCKS.register
 class TransformerBlock(Block):
     def __init__(self, d_model: int, pre_norm: bool, norm: dict, attention: dict,
-                 mlp: dict | None, residual: dict):
+                 mlp: dict | None, residual: dict, value_routing: dict | None = None):
         super().__init__()
         self.pre_norm = pre_norm
         norm_spec = ComponentSpec.from_dict(norm, "TransformerBlock.args.norm")
@@ -600,6 +659,14 @@ class TransformerBlock(Block):
         residual_spec = ComponentSpec.from_dict(residual, "TransformerBlock.args.residual")
         self.norm1 = NORMS.create(norm_spec.class_name, d_model, **norm_spec.args)
         self.attn = ATTENTIONS.create(attention_spec.class_name, d_model, **attention_spec.args)
+        self.value_routing = None
+        if value_routing is not None:
+            route_spec = ComponentSpec.from_dict(value_routing, "TransformerBlock.args.value_routing")
+            if not hasattr(self.attn, "value_dim"):
+                raise ValueError("value routing requires an attention module with value_dim")
+            self.value_routing = ROUTINGS.create(
+                route_spec.class_name, self.attn.value_dim, d_model, **route_spec.args,
+            )
         self.norm2 = None
         self.mlp = None
         if mlp is not None:
@@ -614,6 +681,15 @@ class TransformerBlock(Block):
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor:
         return self.residual(self, x, attention_mask, position_encoding)
+
+    def attention_with_route(self, x, attention_mask, position_encoding):
+        attn, route = self.attn.forward_with_route(x, attention_mask, position_encoding)
+        return attn, route
+
+    def add_value_route(self, x, route, placement):
+        if self.value_routing is not None and self.value_routing.placement == placement:
+            return x + self.value_routing(route)
+        return x
 
 
 @BLOCKS.register
@@ -662,6 +738,7 @@ class GPTStyleInit:
             if isinstance(module, (nn.Linear, nn.Embedding)):
                 nn.init.normal_(module.weight, mean=0.0, std=self.std)
                 if getattr(module, "bias", None) is not None: nn.init.zeros_(module.bias)
+                if getattr(module, "zero_init_output", False): nn.init.zeros_(module.weight)
         if self.scale_residual_projections:
             scale = 1 / math.sqrt(2 * n_layers)
             for module in model.modules():
@@ -735,16 +812,20 @@ class CausalLM(nn.Module):
             elif isinstance(block.attn, DeltaNetLinearAttention):
                 state = None if layer_cache is None else layer_cache["state"]
                 conv_state = None if layer_cache is None else layer_cache["conv_state"]
-                attn_out, state, conv_state = block.attn.forward_cached(x=block.norm1(x), state=state,
-                                                                         conv_state=conv_state)
+                attn_out, state, conv_state, value_route = block.attn.forward_cached_with_route(
+                    x=block.norm1(x), state=state, conv_state=conv_state,
+                )
                 gate = getattr(block.residual, "attention_gate", 1.0)
                 x = x + gate * attn_out
+                x = block.add_value_route(x, value_route, "pre_ffn")
                 new_layers.append({"state": state, "conv_state": conv_state})
             else:
                 raise ValueError("cached generation requires known attention implementations")
             if block.mlp is not None:
                 gate = getattr(block.residual, "mlp_gate", 1.0)
                 x = x + gate * block.mlp(block.norm2(x))
+            if isinstance(block.attn, DeltaNetLinearAttention):
+                x = block.add_value_route(x, value_route, "post_block")
         logits = self.lm_head(self.norm_f(x))
         new_cache = {"length": cache["length"] + input_ids.size(1), "layers": new_layers}
         return logits, new_cache
