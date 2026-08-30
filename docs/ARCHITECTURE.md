@@ -131,6 +131,8 @@ A custom SSM or recurrent block should implement `Block`; it does not need fake 
 
 `OptimizerFactory.build(parameters)` and `ScheduleFactory.build(optimizer, total_steps)` are the extension contracts. `AdamW` and `CosineSchedule` are the baseline registrations. Add Lion, Muon, or other methods by registering another factory; the trainer only consumes the resulting PyTorch optimizer/scheduler interfaces.
 
+Factories may consume `named_parameters()` when routing depends on parameter roles. `MuonAdamW` defaults untagged 2D parameters to Muon and all other shapes to AdamW. Components can override that default without trainer changes by calling `parameter_policy.set_optimizer_policy(parameter, "muon" | "adamw", reason)`. Embeddings, output heads, norms, residual gates, and DeltaNet special parameters use explicit AdamW tags.
+
 The cosine baseline uses linear warmup followed by cosine decay to `final_lr_fraction` of peak LR. Optimizer parameters remain FP32 because the model parameters are FP32 and bf16 is applied through autocast.
 
 ## Data and update accounting

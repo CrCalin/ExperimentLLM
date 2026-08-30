@@ -48,7 +48,9 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
     try:
         training, model_config = config.training, config.model
         _seed_all(training.seed)
-        device = torch.device(device_name if device_name != "cuda" or torch.cuda.is_available() else "cpu")
+        if device_name == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("CUDA training was requested but no CUDA/HIP device is available")
+        device = torch.device(device_name)
         accumulation = max(1, math.ceil(
             training.tokens_per_step / (training.micro_batch_size * model_config.context_length)
         ))
@@ -65,7 +67,7 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
         if total_steps < 1: raise ValueError("configuration produces zero optimizer steps")
 
         model = build_model(model_config).to(device)
-        optimizer = build_optimizer(training.optimizer, model.parameters())
+        optimizer = build_optimizer(training.optimizer, model.named_parameters())
         scheduler = build_schedule(training.schedule, optimizer, total_steps)
         start, tokens_seen = 0, 0
         if resume:
@@ -86,6 +88,22 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
         )
         print(f"model_config={json.dumps(model_config.to_dict(), separators=(',', ':'))}")
         print(f"training_config={json.dumps(training.to_dict(), separators=(',', ':'))}")
+        if hasattr(optimizer, "routing"):
+            muon_ids = {id(p) for group in optimizer.param_groups
+                        if group.get("optimizer_name") == "muon" for p in group["params"]}
+            adamw_ids = {id(p) for group in optimizer.param_groups
+                         if group.get("optimizer_name") == "adamw" for p in group["params"]}
+            print(
+                f"optimizer_routing muon_parameters={sum(p.numel() for p in model.parameters() if id(p) in muon_ids):,} "
+                f"muon_tensors={len(muon_ids)} "
+                f"adamw_parameters={sum(p.numel() for p in model.parameters() if id(p) in adamw_ids):,} "
+                f"adamw_tensors={len(adamw_ids)} "
+                f"muon_lr={next(g['lr'] for g in optimizer.param_groups if g.get('optimizer_name') == 'muon'):.3g} "
+                f"adamw_lr={next(g['lr'] for g in optimizer.param_groups if g.get('optimizer_name') == 'adamw'):.3g}"
+            )
+            for reason, names in sorted(optimizer.routing.items()):
+                if reason != "hidden_matrix":
+                    print(f"optimizer_routing_excluded reason={reason} names={','.join(names)}")
         train_iter = iter(train_data)
         skipped_micro_batches = (start % steps_per_epoch) * accumulation
         for _ in range(skipped_micro_batches): next(train_iter)

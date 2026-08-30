@@ -7,6 +7,7 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 try:
     from fla.ops.gated_delta_rule import (
@@ -34,6 +35,17 @@ from .registry import (
     ATTENTIONS, BLOCKS, EMBEDDINGS, HEADS, INITIALIZATIONS, MLPS, MODELS,
     NORMS, POSITIONS, RESIDUALS,
 )
+from .parameter_policy import set_optimizer_policy
+
+
+def _scaled_dot_product_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, **kwargs) -> torch.Tensor:
+    if q.is_cuda:
+        # Do not silently accept the quadratic math implementation on an
+        # accelerator. CPU/reference execution remains available for tests
+        # and inference on machines without fused attention kernels.
+        with sdpa_kernel(backends=[SDPBackend.FLASH_ATTENTION, SDPBackend.EFFICIENT_ATTENTION]):
+            return F.scaled_dot_product_attention(q, k, v, **kwargs)
+    return F.scaled_dot_product_attention(q, k, v, **kwargs)
 
 
 class PositionEncoding(nn.Module, ABC):
@@ -71,6 +83,7 @@ class RMSNorm(nn.Module):
         super().__init__()
         if eps <= 0: raise ValueError("RMSNorm eps must be positive")
         self.weight = nn.Parameter(torch.ones(dim))
+        set_optimizer_policy(self.weight, "adamw", "norm")
         self.eps = eps
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -146,11 +159,11 @@ class MultiHeadCausalSelfAttention(Attention):
         q, k = position_encoding.apply(q, k)
         dropout = self.dropout if self.training else 0.0
         if attention_mask is None:
-            y = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout, is_causal=True)
+            y = _scaled_dot_product_attention(q, k, v, dropout_p=dropout, is_causal=True)
         else:
             causal = torch.ones((length, length), device=x.device, dtype=torch.bool).tril()
             valid_keys = attention_mask.to(device=x.device, dtype=torch.bool)[:, None, None, :]
-            y = F.scaled_dot_product_attention(
+            y = _scaled_dot_product_attention(
                 q, k, v, attn_mask=causal[None, None] & valid_keys,
                 dropout_p=dropout, is_causal=False,
             )
@@ -166,9 +179,85 @@ class MultiHeadCausalSelfAttention(Attention):
         if past is not None:
             k = torch.cat((past[0], k), dim=-2)
             v = torch.cat((past[1], v), dim=-2)
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=False)
+            y = _scaled_dot_product_attention(q, k, v, is_causal=False)
         else:
-            y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+            y = _scaled_dot_product_attention(q, k, v, is_causal=True)
+        output = self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
+        return output, (k, v)
+
+
+@ATTENTIONS.register
+class GroupedQueryCausalSelfAttention(Attention):
+    """Causal attention with independent query heads and shared KV heads."""
+    def __init__(self, d_model: int, n_q_heads: int, n_kv_heads: int,
+                 head_dim: int = 64, bias: bool = False, dropout: float = 0.0):
+        super().__init__()
+        if n_q_heads <= 0 or n_kv_heads <= 0 or head_dim <= 0:
+            raise ValueError("GQA head counts and head_dim must be positive")
+        if n_q_heads % n_kv_heads != 0:
+            raise ValueError("n_q_heads must be divisible by n_kv_heads")
+        if n_q_heads * head_dim != d_model:
+            raise ValueError("attention requires n_q_heads * head_dim == d_model")
+        if not 0 <= dropout < 1:
+            raise ValueError("attention dropout must be in [0, 1)")
+        self.n_q_heads, self.n_kv_heads, self.head_dim = n_q_heads, n_kv_heads, head_dim
+        self.dropout = dropout
+        # PyTorch's ROCm fused SDPA kernels in this environment require equal
+        # Q/KV head counts. Native enable_gqa works there, but dispatches to
+        # the math kernel; use the fused path with explicit KV expansion.
+        self._native_gqa = torch.version.hip is None
+        self.q_proj = nn.Linear(d_model, n_q_heads * head_dim, bias=bias)
+        self.k_proj = nn.Linear(d_model, n_kv_heads * head_dim, bias=bias)
+        self.v_proj = nn.Linear(d_model, n_kv_heads * head_dim, bias=bias)
+        self.out = nn.Linear(d_model, d_model, bias=bias)
+        self.out.residual_projection = True
+
+    def _project(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch, length, _ = x.shape
+        q = self.q_proj(x).view(batch, length, self.n_q_heads, self.head_dim).transpose(1, 2)
+        k = self.k_proj(x).view(batch, length, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        v = self.v_proj(x).view(batch, length, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        return q, k, v
+
+    def _sdpa(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+              *, is_causal: bool, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+        dropout = self.dropout if self.training else 0.0
+        kwargs = {"dropout_p": dropout, "is_causal": is_causal}
+        if attention_mask is not None:
+            kwargs["attn_mask"] = attention_mask
+            kwargs["is_causal"] = False
+        if self._native_gqa:
+            return _scaled_dot_product_attention(q, k, v, enable_gqa=True, **kwargs)
+        repeats = self.n_q_heads // self.n_kv_heads
+        return _scaled_dot_product_attention(
+            q, k.repeat_interleave(repeats, dim=1), v.repeat_interleave(repeats, dim=1), **kwargs,
+        )
+
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
+                position_encoding: PositionEncoding) -> torch.Tensor:
+        batch, length, _ = x.shape
+        q, k, v = self._project(x)
+        q, k = position_encoding.apply(q, k)
+        if attention_mask is None:
+            y = self._sdpa(q, k, v, is_causal=True)
+        else:
+            causal = torch.ones((length, length), device=x.device, dtype=torch.bool).tril()
+            valid_keys = attention_mask.to(device=x.device, dtype=torch.bool)[:, None, None, :]
+            y = self._sdpa(q, k, v, is_causal=False, attention_mask=causal[None, None] & valid_keys)
+        return self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
+
+    def forward_cached(self, x: torch.Tensor, position_encoding: PositionEncoding,
+                       past: tuple[torch.Tensor, torch.Tensor] | None = None):
+        batch, length, _ = x.shape
+        q, k, v = self._project(x)
+        offset = 0 if past is None else past[0].size(-2)
+        q, k = position_encoding.apply(q, k, offset)
+        if past is not None:
+            k = torch.cat((past[0], k), dim=-2)
+            v = torch.cat((past[1], v), dim=-2)
+            y = self._sdpa(q, k, v, is_causal=False)
+        else:
+            y = self._sdpa(q, k, v, is_causal=True)
         output = self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
         return output, (k, v)
 
@@ -178,6 +267,7 @@ class GatedRMSNorm(nn.Module):
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
+        set_optimizer_policy(self.weight, "adamw", "norm")
 
     def forward(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
         rms = torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps).to(x.dtype)
@@ -237,11 +327,14 @@ class DeltaNetLinearAttention(Attention):
             self.num_v_heads, self.num_v_heads, self.value_dim,
         )
         self.in_proj_weight = nn.Parameter(torch.empty(sum(self.projection_sizes), d_model))
+        set_optimizer_policy(self.in_proj_weight, "adamw", "deltanet_gating_projection")
         nn.init.normal_(self.in_proj_weight, mean=0.0, std=0.02)
         self.A_log = nn.Parameter(torch.empty(self.num_v_heads))
         self.dt_bias = nn.Parameter(torch.empty(self.num_v_heads))
         self.A_log._no_weight_decay = True
         self.dt_bias._no_weight_decay = True
+        set_optimizer_policy(self.A_log, "adamw", "deltanet_decay")
+        set_optimizer_policy(self.dt_bias, "adamw", "deltanet_gating")
         if conv_bias:
             raise ValueError("the optimized GatedDeltaNet path requires conv_bias=false")
         self.conv_weight = nn.Parameter(torch.empty(
@@ -347,6 +440,8 @@ class DeltaNetLinearAttention(Attention):
         projected = F.linear(x, self.in_proj_weight)
         q, k, v, a, beta, gate = torch.split(projected, self.projection_sizes, dim=-1)
         qkv = projected[..., :2 * self.key_dim + self.value_dim]
+        if x.is_cuda and not use_cache and fla_causal_conv1d is None:
+            raise RuntimeError("CUDA DeltaNet training requires FLA causal_conv1d")
         if fla_causal_conv1d is not None and x.is_cuda and not use_cache and conv_state is None:
             qkv, _ = fla_causal_conv1d(
                 qkv, weight=self.conv_weight.squeeze(1), bias=None,
@@ -366,7 +461,11 @@ class DeltaNetLinearAttention(Attention):
         expected = (batch, self.num_v_heads, self.head_v_dim, self.head_dim)
         if state is not None and state.shape != expected:
             raise ValueError(f"DeltaNet state must have shape {expected}")
-        use_fused = chunk_gated_delta_rule is not None and x.is_cuda
+        if x.is_cuda and fused_recurrent_gated_delta_rule is None:
+            raise RuntimeError("CUDA DeltaNet execution requires FLA fused_recurrent_gated_delta_rule")
+        if x.is_cuda and (torch.is_grad_enabled() or length > 64) and chunk_gated_delta_rule is None:
+            raise RuntimeError("CUDA DeltaNet training/long-context execution requires FLA chunk_gated_delta_rule")
+        use_fused = x.is_cuda
         use_chunk = use_fused and (torch.is_grad_enabled() or length > 64)
         if use_chunk:
             y, state = _run_chunk_gated_delta_rule(
@@ -406,6 +505,8 @@ class DeltaNetLinearAttention(Attention):
         y = y.contiguous().view(batch, length, self.value_dim)
         gate = gate.view(batch, length, self.num_v_heads, self.head_v_dim)
         normalized = y.view(batch, length, self.num_v_heads, self.head_v_dim)
+        if y.is_cuda and fla_rms_norm_gated is None:
+            raise RuntimeError("CUDA DeltaNet execution requires FLA rms_norm_gated")
         if fla_rms_norm_gated is not None and y.is_cuda:
             y = fla_rms_norm_gated(
                 normalized, gate, self.o_norm.weight, None,
@@ -451,23 +552,28 @@ class StandardResidual(Residual):
                 attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
         if block.pre_norm:
             x = x + block.attn(block.norm1(x), attention_mask, position_encoding)
-            return x + block.mlp(block.norm2(x))
+            return x if block.mlp is None else x + block.mlp(block.norm2(x))
         x = block.norm1(x + block.attn(x, attention_mask, position_encoding))
-        return block.norm2(x + block.mlp(x))
+        return x if block.mlp is None else block.norm2(x + block.mlp(x))
 
 
 @RESIDUALS.register
 class GatedResidual(Residual):
     """Sequential pre-norm residual branches with learned scalar gates."""
-    def __init__(self, attention_gate_init: float = 1.0, mlp_gate_init: float = 1.0):
+    def __init__(self, attention_gate_init: float = 1.0, mlp_gate_init: float | None = 1.0):
         super().__init__()
         self.attention_gate = nn.Parameter(torch.tensor(float(attention_gate_init)))
-        self.mlp_gate = nn.Parameter(torch.tensor(float(mlp_gate_init)))
+        set_optimizer_policy(self.attention_gate, "adamw", "residual_gate")
+        if mlp_gate_init is not None:
+            self.mlp_gate = nn.Parameter(torch.tensor(float(mlp_gate_init)))
+            set_optimizer_policy(self.mlp_gate, "adamw", "residual_gate")
 
     def forward(self, block: "TransformerBlock", x: torch.Tensor,
                 attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
         if not block.pre_norm: raise ValueError("GatedResidual requires pre_norm=true")
         x = x + self.attention_gate * block.attn(block.norm1(x), attention_mask, position_encoding)
+        if block.mlp is None:
+            return x
         return x + self.mlp_gate * block.mlp(block.norm2(x))
 
 
@@ -479,24 +585,31 @@ class ParallelResidual(Residual):
     def forward(self, block: "TransformerBlock", x: torch.Tensor,
                 attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
         if not block.pre_norm: raise ValueError("ParallelResidual currently requires pre_norm=true")
-        return x + block.attn(block.norm1(x), attention_mask, position_encoding) + block.mlp(block.norm2(x))
+        x = x + block.attn(block.norm1(x), attention_mask, position_encoding)
+        return x if block.mlp is None else x + block.mlp(block.norm2(x))
 
 
 @BLOCKS.register
 class TransformerBlock(Block):
     def __init__(self, d_model: int, pre_norm: bool, norm: dict, attention: dict,
-                 mlp: dict, residual: dict):
+                 mlp: dict | None, residual: dict):
         super().__init__()
         self.pre_norm = pre_norm
         norm_spec = ComponentSpec.from_dict(norm, "TransformerBlock.args.norm")
         attention_spec = ComponentSpec.from_dict(attention, "TransformerBlock.args.attention")
-        mlp_spec = ComponentSpec.from_dict(mlp, "TransformerBlock.args.mlp")
         residual_spec = ComponentSpec.from_dict(residual, "TransformerBlock.args.residual")
         self.norm1 = NORMS.create(norm_spec.class_name, d_model, **norm_spec.args)
         self.attn = ATTENTIONS.create(attention_spec.class_name, d_model, **attention_spec.args)
-        self.norm2 = NORMS.create(norm_spec.class_name, d_model, **norm_spec.args)
-        self.mlp = MLPS.create(mlp_spec.class_name, d_model, **mlp_spec.args)
-        self.residual = RESIDUALS.create(residual_spec.class_name, **residual_spec.args)
+        self.norm2 = None
+        self.mlp = None
+        if mlp is not None:
+            mlp_spec = ComponentSpec.from_dict(mlp, "TransformerBlock.args.mlp")
+            self.norm2 = NORMS.create(norm_spec.class_name, d_model, **norm_spec.args)
+            self.mlp = MLPS.create(mlp_spec.class_name, d_model, **mlp_spec.args)
+        residual_args = dict(residual_spec.args)
+        if mlp is None and residual_spec.class_name == "GatedResidual":
+            residual_args["mlp_gate_init"] = None
+        self.residual = RESIDUALS.create(residual_spec.class_name, **residual_args)
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor:
@@ -576,10 +689,15 @@ class CausalLM(nn.Module):
             config.output_head.class_name, config.d_model, config.vocab_size,
             **config.output_head.args,
         )
+        for parameter in self.wte.parameters():
+            set_optimizer_policy(parameter, "adamw", "token_embedding")
+        for parameter in self.lm_head.parameters():
+            set_optimizer_policy(parameter, "adamw", "output_head")
         if config.tie_embeddings:
             if self.lm_head.weight.shape != self.wte.weight.shape:
                 raise ValueError("input embedding and output head weights cannot be tied")
             self.lm_head.weight = self.wte.weight
+            set_optimizer_policy(self.wte.weight, "adamw", "tied_embedding_output")
         initializer = INITIALIZATIONS.create(config.initialization.class_name, **config.initialization.args)
         initializer.apply(self, len(self.blocks))
 
@@ -607,22 +725,26 @@ class CausalLM(nn.Module):
         for block, layer_cache in zip(self.blocks, cache["layers"]):
             if not isinstance(block, TransformerBlock) or block.pre_norm is not True:
                 raise ValueError("cached generation requires pre-norm TransformerBlock layers")
-            if isinstance(block.attn, MultiHeadCausalSelfAttention):
+            if isinstance(block.attn, (MultiHeadCausalSelfAttention, GroupedQueryCausalSelfAttention)):
                 attn_out, new_cache = block.attn.forward_cached(
                     block.norm1(x), self.position_encoding, layer_cache,
                 )
-                x = x + attn_out
+                gate = getattr(block.residual, "attention_gate", 1.0)
+                x = x + gate * attn_out
                 new_layers.append(new_cache)
             elif isinstance(block.attn, DeltaNetLinearAttention):
                 state = None if layer_cache is None else layer_cache["state"]
                 conv_state = None if layer_cache is None else layer_cache["conv_state"]
                 attn_out, state, conv_state = block.attn.forward_cached(x=block.norm1(x), state=state,
                                                                          conv_state=conv_state)
-                x = x + attn_out
+                gate = getattr(block.residual, "attention_gate", 1.0)
+                x = x + gate * attn_out
                 new_layers.append({"state": state, "conv_state": conv_state})
             else:
                 raise ValueError("cached generation requires known attention implementations")
-            x = x + block.mlp(block.norm2(x))
+            if block.mlp is not None:
+                gate = getattr(block.residual, "mlp_gate", 1.0)
+                x = x + gate * block.mlp(block.norm2(x))
         logits = self.lm_head(self.norm_f(x))
         new_cache = {"length": cache["length"] + input_ids.size(1), "layers": new_layers}
         return logits, new_cache
@@ -630,6 +752,27 @@ class CausalLM(nn.Module):
     @property
     def num_parameters(self) -> int:
         return sum(parameter.numel() for parameter in self.parameters())
+
+    @property
+    def parameter_report(self) -> dict[str, int]:
+        block_counts = [sum(p.numel() for p in block.parameters()) for block in self.blocks]
+        mha = sum(n for block, n in zip(self.blocks, block_counts)
+                  if isinstance(block.attn, MultiHeadCausalSelfAttention))
+        delta = sum(n for block, n in zip(self.blocks, block_counts)
+                    if isinstance(block.attn, DeltaNetLinearAttention))
+        ffn = sum(sum(p.numel() for p in block.mlp.parameters())
+                  for block in self.blocks if block.mlp is not None)
+        absent = [block for block in self.blocks if block.mlp is None]
+        removed = len(absent) * 3 * self.config.d_model * 768
+        removed += sum(self.config.d_model + (isinstance(block.residual, GatedResidual))
+                       for block in absent)
+        return {
+            "total": self.num_parameters,
+            "removed_vs_d_ff_768_all_layers": removed,
+            "mha_blocks": mha,
+            "deltanet_blocks": delta,
+            "ffn_remaining": ffn,
+        }
 
 
 def build_model(config: ModelConfig) -> nn.Module:

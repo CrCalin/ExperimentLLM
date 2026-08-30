@@ -76,7 +76,7 @@ def train_cudagraphs(config: ExperimentConfig, device_name: str = "cuda") -> Pat
     device = torch.device(device_name)
     total_steps, accumulation, effective_tokens = _step_count(config)
     model = torch.compile(build_model(config.model).to(device), mode="default")
-    optimizer = build_optimizer(config.training.optimizer, model.parameters())
+    optimizer = build_optimizer(config.training.optimizer, model.named_parameters())
     scheduler = build_schedule(config.training.schedule, optimizer, total_steps)
     inputs = torch.empty(config.training.micro_batch_size, config.model.context_length,
                          device=device, dtype=torch.long)

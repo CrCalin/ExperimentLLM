@@ -46,7 +46,7 @@ class GatedResidualTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(loss))
 
     def test_plus_sized_parameter_count_adds_fourteen_scalars(self):
-        config = ExperimentConfig.load("configs/gated_residual_transformer_plus.json")
+        config = ExperimentConfig.load("configs/gated_residual_transformer.json")
         self.assertEqual(build_model(config.model).num_parameters, 10161934)
 
 

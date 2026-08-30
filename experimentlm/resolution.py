@@ -19,11 +19,14 @@ def _layer(layer: LayerSpec) -> LayerSpec:
     if layer.class_name == "TransformerBlock":
         mappings = {
             "norm": (NORMS, {"dim"}), "attention": (ATTENTIONS, {"d_model"}),
-            "mlp": (MLPS, {"d_model"}), "residual": (RESIDUALS, set()),
+            "residual": (RESIDUALS, set()),
         }
         for key, (registry, injected) in mappings.items():
             spec = ComponentSpec.from_dict(args[key], f"{layer.class_name}.args.{key}")
             args[key] = _component(spec, registry, injected).to_dict()
+        if args["mlp"] is not None:
+            spec = ComponentSpec.from_dict(args["mlp"], f"{layer.class_name}.args.mlp")
+            args["mlp"] = _component(spec, MLPS, {"d_model"}).to_dict()
     elif layer.class_name == "DoubleNormTransformerBlock":
         mappings = {
             key: (NORMS, {"dim"})
