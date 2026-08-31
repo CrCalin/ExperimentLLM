@@ -13,6 +13,8 @@ def evaluate_loss(model, batches, device: torch.device, max_batches: int | None,
     for index, (inputs, labels) in enumerate(batches):
         if max_batches is not None and index >= max_batches: break
         inputs, labels = inputs.to(device), labels.to(device)
+        if hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+            torch.compiler.cudagraph_mark_step_begin()
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16,
                             enabled=precision == "bf16"):
             _, loss = model(inputs, labels)

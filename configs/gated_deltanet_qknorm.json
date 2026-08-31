@@ -49,9 +49,9 @@
     "optimizer": {"class": "AdamW", "args": {"lr": 0.001, "betas": [0.9, 0.95], "eps": 1e-8, "weight_decay": 0.1}},
     "precision": "bf16", "tokens_per_step": 131072, "micro_batch_size": 8,
     "grad_clip": 1.0, "epochs": 1, "seed": 12345,
-    "schedule": {"class": "CosineSchedule", "args": {"warmup_fraction": 0.015, "final_lr_fraction": 0.1}},
+    "schedule": {"class": "WSDSchedule", "args": {"warmup_fraction": 0.015, "stable_fraction": 0.85, "final_lr_fraction": 0.1}},
     "validation_interval_steps": 250, "checkpoint_interval_steps": 500,
-    "log_interval_steps": 250, "compile": true
+    "log_interval_steps": 250, "compile": true, "compile_mode": "reduce-overhead"
   },
   "data": {"train_bin": "train.bin", "eval_bin": "eval.bin"},
   "evaluation": {"validation_batches": 100}

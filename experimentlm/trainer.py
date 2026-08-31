@@ -77,7 +77,21 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
             start, tokens_seen = blob["step"], blob["tokens_seen"]
         if training.compile:
             print("compiling_model=true", flush=True)
-            model = torch.compile(model)
+            if training.compile_mode == "reduce-overhead":
+                # Inductor's ROCm cudagraph trees otherwise retain the previous
+                # loss tensor and report an overwritten-output error on the
+                # next iteration. Keep this opt-in to the reduce-overhead mode.
+                from torch._inductor import config as inductor_config
+                inductor_config.triton.cudagraph_trees_generation_cloning = "user_visible"
+            model = torch.compile(model, mode=training.compile_mode)
+        stable_cudagraph_grads = training.compile and training.compile_mode == "reduce-overhead"
+        if stable_cudagraph_grads:
+            # CUDAGraph capture cannot safely allocate .grad tensors during a
+            # compiled backward, which matters here because the trainer uses
+            # gradient accumulation. Allocate stable buffers before capture.
+            for parameter in model.parameters():
+                if parameter.requires_grad:
+                    parameter.grad = torch.zeros_like(parameter)
 
         print(f"log_file={log_path}")
         print(
@@ -114,10 +128,12 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
         for step in progress:
             if step > start and step % steps_per_epoch == 0:
                 train_iter = iter(train_data)
-            optimizer.zero_grad(set_to_none=True)
+            optimizer.zero_grad(set_to_none=not stable_cudagraph_grads)
             loss_sum, started = 0.0, time.perf_counter()
             for _ in range(accumulation):
                 inputs, labels = next(train_iter)
+                if training.compile and hasattr(torch.compiler, "cudagraph_mark_step_begin"):
+                    torch.compiler.cudagraph_mark_step_begin()
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16,
                                     enabled=training.precision == "bf16"):
                     _, loss = model(inputs.to(device), labels.to(device))

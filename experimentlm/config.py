@@ -164,6 +164,7 @@ class TrainingConfig:
     max_steps: int | None = None
     max_tokens: int | None = None
     compile: bool = False
+    compile_mode: str = "default"
 
     @classmethod
     def from_dict(cls, value: JsonObject) -> "TrainingConfig":
@@ -184,6 +185,8 @@ class TrainingConfig:
             _positive(f"training.{name}", getattr(result, name))
         if not isinstance(result.seed, int) or isinstance(result.seed, bool): raise ValueError("training.seed must be an integer")
         if not isinstance(result.compile, bool): raise ValueError("training.compile must be boolean")
+        if result.compile_mode not in {"default", "reduce-overhead", "max-autotune", "max-autotune-no-cudagraphs"}:
+            raise ValueError("training.compile_mode is not supported")
         if not isinstance(result.grad_clip, (int, float)) or isinstance(result.grad_clip, bool):
             raise ValueError("training.grad_clip must be numeric")
         _positive("training.grad_clip", result.grad_clip)
