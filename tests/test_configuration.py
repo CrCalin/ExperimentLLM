@@ -31,10 +31,9 @@ class ConfigurationTests(unittest.TestCase):
         second["args"]["residual"]["class"] = "StandardResidual"
         raw["model"]["layers"] = [first, second]
         config = resolve_experiment(ExperimentConfig.from_dict(raw))
-        logits, loss = build_model(config.model)(
-            torch.randint(0, 128, (2, 16)), torch.randint(0, 128, (2, 16))
-        )
-        self.assertEqual(logits.shape, (2, 16, 128))
+        inputs = torch.randint(0, 128, (2, 15))
+        logits, loss = build_model(config.model)(inputs, torch.randint(0, 128, (2, 15)))
+        self.assertEqual(logits.shape, (2, 15, 128))
         self.assertTrue(torch.isfinite(loss))
 
     def test_unknown_registered_class_is_rejected(self):

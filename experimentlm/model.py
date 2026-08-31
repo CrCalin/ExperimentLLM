@@ -144,7 +144,8 @@ class RoPE(PositionEncoding):
 class MultiHeadCausalSelfAttention(Attention):
     def __init__(self, d_model: int, n_heads: int, head_dim: int | None = None,
                  bias: bool = False, dropout: float = 0.0,
-                 qk_norm: bool = False, qk_norm_eps: float = 1e-6):
+                 qk_norm: bool = False, qk_norm_eps: float = 1e-6,
+                 head_scale: bool = False):
         super().__init__()
         self.n_heads = n_heads
         self.head_dim = head_dim or d_model // n_heads
@@ -157,6 +158,9 @@ class MultiHeadCausalSelfAttention(Attention):
         self.out.residual_projection = True
         self.q_norm = RMSNorm(self.head_dim, qk_norm_eps) if qk_norm else None
         self.k_norm = RMSNorm(self.head_dim, qk_norm_eps) if qk_norm else None
+        if head_scale:
+            self.head_scale = nn.Parameter(torch.ones(self.n_heads))
+            set_optimizer_policy(self.head_scale, "adamw", "attention_head_scale")
 
     def _normalize_qk(self, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if self.q_norm is not None:
@@ -170,6 +174,8 @@ class MultiHeadCausalSelfAttention(Attention):
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
         q, k = self._normalize_qk(q, k)
         q, k = position_encoding.apply(q, k)
+        if hasattr(self, "head_scale"):
+            q = q * self.head_scale.to(dtype=q.dtype)[None, :, None, None]
         dropout = self.dropout if self.training else 0.0
         if attention_mask is None:
             y = _scaled_dot_product_attention(q, k, v, dropout_p=dropout, is_causal=True)
@@ -190,10 +196,19 @@ class MultiHeadCausalSelfAttention(Attention):
         offset = 0 if past is None else past[0].size(-2)
         q, k = self._normalize_qk(q, k)
         q, k = position_encoding.apply(q, k, offset)
+        if hasattr(self, "head_scale"):
+            q = q * self.head_scale.to(dtype=q.dtype)[None, :, None, None]
         if past is not None:
+            past_length = past[0].size(-2)
             k = torch.cat((past[0], k), dim=-2)
             v = torch.cat((past[1], v), dim=-2)
-            y = _scaled_dot_product_attention(q, k, v, is_causal=False)
+            # SDPA's is_causal flag assumes Q and K start at the same
+            # position.  With a multi-token continuation, make the offset
+            # explicit so query i cannot see continuation tokens > i.
+            causal = torch.ones((length, k.size(-2)), device=x.device, dtype=torch.bool).tril(
+                diagonal=past_length,
+            )
+            y = _scaled_dot_product_attention(q, k, v, attn_mask=causal, is_causal=False)
         else:
             y = _scaled_dot_product_attention(q, k, v, is_causal=True)
         output = self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
@@ -267,9 +282,13 @@ class GroupedQueryCausalSelfAttention(Attention):
         offset = 0 if past is None else past[0].size(-2)
         q, k = position_encoding.apply(q, k, offset)
         if past is not None:
+            past_length = past[0].size(-2)
             k = torch.cat((past[0], k), dim=-2)
             v = torch.cat((past[1], v), dim=-2)
-            y = self._sdpa(q, k, v, is_causal=False)
+            causal = torch.ones((length, k.size(-2)), device=x.device, dtype=torch.bool).tril(
+                diagonal=past_length,
+            )
+            y = self._sdpa(q, k, v, is_causal=False, attention_mask=causal[None, None])
         else:
             y = self._sdpa(q, k, v, is_causal=True)
         output = self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
@@ -333,8 +352,10 @@ class DeltaNetLinearAttention(Attention):
         self.key_dim = n_heads * head_dim
         self.head_v_dim = int(head_dim * expand_v)
         self.value_dim = self.num_v_heads * self.head_v_dim
-        if self.num_v_heads % n_heads != 0:
-            raise ValueError("num_v_heads must be divisible by n_heads")
+        # FLA's grouped-value path requires the query head count to be an
+        # integer multiple of the value head count (e.g. 4/1, 4/2, 4/4).
+        if n_heads % self.num_v_heads != 0:
+            raise ValueError("n_heads must be divisible by num_v_heads")
         if not math.isclose(head_dim * expand_v, self.head_v_dim):
             raise ValueError("expand_v must produce an integer value head dimension")
 
@@ -469,6 +490,13 @@ class DeltaNetLinearAttention(Attention):
         q = q.view(batch, length, self.n_heads, self.head_dim)
         k = k.view(batch, length, self.n_heads, self.head_dim)
         v = v.view(batch, length, self.num_v_heads, self.head_v_dim)
+        if self.num_v_heads != self.n_heads:
+            # FLA's grouped-value rule has one q/k stream per value state.
+            # Collapse each query-head group before dispatching; the baseline
+            # (equal query/value heads) remains byte-for-byte unchanged.
+            groups = self.n_heads // self.num_v_heads
+            q = q.view(batch, length, self.num_v_heads, groups, self.head_dim).mean(dim=3)
+            k = k.view(batch, length, self.num_v_heads, groups, self.head_dim).mean(dim=3)
         value_route = v.reshape(batch, length, self.value_dim) if self.return_value_route else None
         if attention_mask is not None:
             if attention_mask.shape != (batch, length):
@@ -632,6 +660,31 @@ class GatedResidual(Residual):
 
 
 @RESIDUALS.register
+class ChannelGatedResidual(Residual):
+    """Sequential pre-norm residual branches with per-channel gates."""
+    def __init__(self, d_model: int, attention_gate_init: float = 1.0,
+                 mlp_gate_init: float = 1.0):
+        super().__init__()
+        if d_model <= 0:
+            raise ValueError("ChannelGatedResidual d_model must be positive")
+        self.attention_gate = nn.Parameter(torch.full((d_model,), float(attention_gate_init)))
+        self.mlp_gate = nn.Parameter(torch.full((d_model,), float(mlp_gate_init)))
+        set_optimizer_policy(self.attention_gate, "adamw", "channel_residual_gate")
+        set_optimizer_policy(self.mlp_gate, "adamw", "channel_residual_gate")
+
+    def forward(self, block: "TransformerBlock", x: torch.Tensor,
+                attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
+        if not block.pre_norm: raise ValueError("ChannelGatedResidual requires pre_norm=true")
+        attn, route = block.attention_with_route(block.norm1(x), attention_mask, position_encoding)
+        x = x + self.attention_gate * attn
+        x = block.add_value_route(x, route, "pre_ffn")
+        if block.mlp is None:
+            return block.add_value_route(x, route, "post_block")
+        x = x + self.mlp_gate * block.mlp(block.norm2(x))
+        return block.add_value_route(x, route, "post_block")
+
+
+@RESIDUALS.register
 class ParallelResidual(Residual):
     """Original ExperimentLM baseline: both branches consume the same residual stream."""
     def __init__(self): super().__init__()
@@ -676,7 +729,12 @@ class TransformerBlock(Block):
         residual_args = dict(residual_spec.args)
         if mlp is None and residual_spec.class_name == "GatedResidual":
             residual_args["mlp_gate_init"] = None
-        self.residual = RESIDUALS.create(residual_spec.class_name, **residual_args)
+        if residual_spec.class_name == "ChannelGatedResidual":
+            self.residual = RESIDUALS.create(
+                residual_spec.class_name, d_model=d_model, **residual_args,
+            )
+        else:
+            self.residual = RESIDUALS.create(residual_spec.class_name, **residual_args)
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor:
@@ -780,6 +838,14 @@ class CausalLM(nn.Module):
 
     def forward(self, input_ids: torch.Tensor, labels: torch.Tensor | None = None,
                 attention_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Return logits and loss against already-next-token-aligned labels.
+
+        ``labels[:, t]`` is the target for ``input_ids[:, t]``.  Callers
+        performing causal language modeling must shift the token stream when
+        constructing the inputs/labels pair; the model deliberately does not
+        shift labels implicitly.  This is the contract used by ``TokenStream``
+        and the trainer.
+        """
         if input_ids.size(1) > self.config.context_length: raise ValueError("sequence exceeds context_length")
         x = self.wte(input_ids)
         for block in self.blocks:

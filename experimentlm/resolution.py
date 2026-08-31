@@ -23,6 +23,8 @@ def _layer(layer: LayerSpec) -> LayerSpec:
         }
         for key, (registry, injected) in mappings.items():
             spec = ComponentSpec.from_dict(args[key], f"{layer.class_name}.args.{key}")
+            if key == "residual" and spec.class_name == "ChannelGatedResidual":
+                injected = {"d_model"}
             args[key] = _component(spec, registry, injected).to_dict()
         if args["value_routing"] is not None:
             spec = ComponentSpec.from_dict(args["value_routing"], f"{layer.class_name}.args.value_routing")

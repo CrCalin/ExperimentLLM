@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import contextlib
 import json
 import math
 import time
@@ -57,7 +58,8 @@ def normalize_lambada_metrics(result, task_result, model_path):
 
 @torch.inference_mode()
 def local_validation(
-    model_path, validation_bin, device, batch_size, max_batches, model=None
+    model_path, validation_bin, device, batch_size, max_batches, model=None,
+    precision="bfloat16",
 ):
     owns_model = model is None
     if owns_model:
@@ -80,7 +82,10 @@ def local_validation(
             if max_batches is not None and index >= max_batches:
                 break
             inputs, labels = inputs.to(device), labels.to(device)
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+            dtype = {"bfloat16": torch.bfloat16, "float16": torch.float16, "none": None}[precision]
+            autocast = (torch.autocast(device_type=device.type, dtype=dtype)
+                        if dtype is not None else contextlib.nullcontext())
+            with autocast:
                 output = model(input_ids=inputs, labels=labels)
             tokens = labels.numel()
             total_loss += float(output.loss) * tokens
@@ -112,7 +117,7 @@ def parse_args():
 
     parser.add_argument(
         "--batch-size",
-        default="auto",
+        default=64,
         help='Batch size, e.g. "auto", 8, 16, 32',
     )
 
@@ -196,6 +201,7 @@ def main():
         args.validation_batch_size,
         validation_limit,
         model=benchmark_model.model,
+        precision=args.mixed_precision,
     )
     validation_seconds = time.perf_counter() - validation_start
     validation_result = {

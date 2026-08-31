@@ -1,4 +1,6 @@
 import tempfile
+import copy
+import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -19,9 +21,17 @@ class GQATests(unittest.TestCase):
     def _model(self, name):
         return build_model(ExperimentConfig.load(ROOT / "configs" / name).model)
 
+    def _model_with_kv_heads(self, kv_heads):
+        raw = json.loads((ROOT / "configs" / "gated_deltanet_gqa_2kv.json").read_text())
+        for layer in raw["model"]["layers"]:
+            attention = layer.get("args", {}).get("attention")
+            if attention and attention["class"] == "GroupedQueryCausalSelfAttention":
+                attention["args"]["n_kv_heads"] = kv_heads
+        return build_model(ExperimentConfig.from_dict(raw).model)
+
     def test_both_configs_structure_forward_backward_and_counts(self):
-        for name, kv_heads in (("gated_deltanet_gqa_2kv.json", 2), ("gated_deltanet_gqa_1kv.json", 1)):
-            model = self._model(name)
+        for kv_heads in (2, 1):
+            model = self._model_with_kv_heads(kv_heads)
             expected_total = 10_444_846 - 3 * ((4 - kv_heads) * 2 * 64 * 256)
             self.assertEqual(model.num_parameters, expected_total)
             self.assertEqual([type(block.attn).__name__ for block in model.blocks], [
@@ -33,8 +43,8 @@ class GQATests(unittest.TestCase):
                 self.assertEqual((block.attn.n_q_heads, block.attn.n_kv_heads), (4, kv_heads))
                 self.assertEqual(sum(p.numel() for p in block.attn.parameters()), (4 + 2 * kv_heads) * 64 * 256 + 256 * 256)
             tokens = torch.randint(0, 8192, (2, 13))
-            logits, loss = model(tokens, tokens)
-            self.assertEqual(logits.shape, (2, 13, 8192))
+            logits, loss = model(tokens[:, :-1], tokens[:, 1:])
+            self.assertEqual(logits.shape, (2, 12, 8192))
             loss.backward()
             self.assertTrue(all(p.grad is not None for p in model.parameters()))
 
@@ -49,6 +59,13 @@ class GQATests(unittest.TestCase):
         changed = x.clone()
         changed[:, 4:] = torch.randn_like(changed[:, 4:])
         torch.testing.assert_close(attention(x, None, RoPE(16))[:, :4], attention(changed, None, RoPE(16))[:, :4])
+
+    def test_grouped_value_head_divisibility(self):
+        for value_heads in (4, 2, 1):
+            attention = DeltaNetLinearAttention(32, n_heads=4, head_dim=8, num_v_heads=value_heads)
+            self.assertEqual(attention.num_v_heads, value_heads)
+        with self.assertRaises(ValueError):
+            DeltaNetLinearAttention(32, n_heads=4, head_dim=8, num_v_heads=3)
 
     def test_cache_generation_and_checkpoint_round_trip(self):
         config = ExperimentConfig.load(ROOT / "configs/gated_deltanet_gqa_2kv.json")

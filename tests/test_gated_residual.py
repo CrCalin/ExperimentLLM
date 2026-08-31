@@ -41,8 +41,9 @@ class GatedResidualTests(unittest.TestCase):
         self.assertTrue(residual.attention_gate.requires_grad)
         self.assertAlmostEqual(residual.attention_gate.item(), 0.25)
         self.assertAlmostEqual(residual.mlp_gate.item(), 0.5)
-        logits, loss = model(torch.randint(0, 32, (2, 8)), torch.randint(0, 32, (2, 8)))
-        self.assertEqual(logits.shape, (2, 8, 32))
+        tokens = torch.randint(0, 32, (2, 8))
+        logits, loss = model(tokens[:, :-1], tokens[:, 1:])
+        self.assertEqual(logits.shape, (2, 7, 32))
         self.assertTrue(torch.isfinite(loss))
 
     def test_plus_sized_parameter_count_adds_fourteen_scalars(self):

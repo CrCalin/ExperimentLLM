@@ -11,7 +11,7 @@ from experimentlm.model import DeltaNetLinearAttention, _gdn_recurrence
 from experimentlm.optim import build_optimizer, build_schedule
 
 
-OPTIMIZED_CONFIG = Path(__file__).parents[1] / "configs" / "hybrid_deltanet_transformer.json"
+OPTIMIZED_CONFIG = Path(__file__).parents[1] / "configs" / "gated_deltanet_transformer.json"
 CONFIG = OPTIMIZED_CONFIG
 
 
@@ -31,14 +31,14 @@ class DeltaNetTests(unittest.TestCase):
              "DeltaNetLinearAttention", "DeltaNetLinearAttention",
              "MultiHeadCausalSelfAttention"],
         )
-        self.assertEqual(model.num_parameters, 10_444_832)
+        self.assertEqual(model.num_parameters, 10_444_846)
         delta = model.blocks[1].attn
         self.assertEqual((delta.key_dim, delta.value_dim), (256, 256))
         self.assertEqual(tuple(delta.initial_state(torch.randn(2, 3, 256)).shape), (2, 4, 64, 64))
 
     def test_optimized_expand_v1_config_uses_best_tested_path(self):
         model = build_model(ExperimentConfig.load(OPTIMIZED_CONFIG).model)
-        self.assertEqual(model.num_parameters, 10_444_832)
+        self.assertEqual(model.num_parameters, 10_444_846)
         delta = model.blocks[1].attn
     def test_causality_and_state_reset(self):
         x = torch.randn(2, 13, 32)

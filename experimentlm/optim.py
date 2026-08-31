@@ -201,6 +201,35 @@ class CosineSchedule(ScheduleFactory):
         return torch.optim.lr_scheduler.LambdaLR(optimizer, factor)
 
 
+@SCHEDULES.register
+class WSDSchedule(ScheduleFactory):
+    def __init__(self, warmup_fraction: float = 0.015, stable_fraction: float = 0.85,
+                 final_lr_fraction: float = 0.1):
+        if not 0 <= warmup_fraction < 1: raise ValueError("warmup_fraction must be in [0, 1)")
+        if not 0 < stable_fraction <= 1: raise ValueError("stable_fraction must be in (0, 1]")
+        if warmup_fraction > stable_fraction:
+            raise ValueError("warmup_fraction cannot exceed stable_fraction")
+        if not 0 <= final_lr_fraction <= 1: raise ValueError("final_lr_fraction must be in [0, 1]")
+        self.warmup_fraction = warmup_fraction
+        self.stable_fraction = stable_fraction
+        self.final_lr_fraction = final_lr_fraction
+
+    def build(self, optimizer: torch.optim.Optimizer, total_steps: int) -> torch.optim.lr_scheduler.LRScheduler:
+        warmup_steps = max(1, int(total_steps * self.warmup_fraction))
+        decay_start = min(total_steps - 1, max(warmup_steps, math.ceil(total_steps * self.stable_fraction) - 1))
+        decay_steps = max(1, total_steps - decay_start - 1)
+
+        def factor(step: int) -> float:
+            if step < warmup_steps:
+                return (step + 1) / warmup_steps
+            if step < decay_start:
+                return 1.0
+            progress = min(1.0, (step - decay_start) / decay_steps)
+            return self.final_lr_fraction + (1 - self.final_lr_fraction) * 0.5 * (1 + math.cos(math.pi * progress))
+
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, factor)
+
+
 def build_optimizer(spec: ComponentSpec, parameters: Iterable[torch.nn.Parameter] |
                     Iterable[tuple[str, torch.nn.Parameter]]) -> torch.optim.Optimizer:
     factory = OPTIMIZERS.create(spec.class_name, **spec.args)

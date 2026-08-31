@@ -28,7 +28,7 @@ class MuonAdamWTests(unittest.TestCase):
                             "n_heads": 2, "head_dim": 8,
                         }},
                         "mlp": {"class": "SwiGLU", "args": {"d_ff": 32}},
-                        "residual": {"class": "GatedResidual", "args": {}},
+                        "residual": {"class": "ChannelGatedResidual", "args": {}},
                     }},
                     {"class": "TransformerBlock", "args": {
                         "pre_norm": True,
@@ -88,6 +88,7 @@ class MuonAdamWTests(unittest.TestCase):
         self.assertIn("lm_head.weight", adamw)
         self.assertIn("blocks.0.norm1.weight", adamw)
         self.assertIn("blocks.0.residual.attention_gate", adamw)
+        self.assertIn("blocks.0.residual.mlp_gate", adamw)
         self.assertIn("blocks.1.attn.A_log", adamw)
         self.assertIn("blocks.1.attn.dt_bias", adamw)
         self.assertIn("blocks.1.attn.in_proj_weight", adamw)
@@ -105,7 +106,7 @@ class MuonAdamWTests(unittest.TestCase):
         )
         initial = {name: parameter.detach().clone() for name, parameter in model.named_parameters()}
         tokens = torch.randint(0, config.model.vocab_size, (1, 8))
-        _, loss = model(tokens, tokens)
+        _, loss = model(tokens[:, :-1], tokens[:, 1:])
         loss.backward()
         optimizer.step()
         scheduler.step()

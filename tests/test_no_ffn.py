@@ -57,7 +57,7 @@ class NoFFNTests(unittest.TestCase):
         self.assertEqual(model.parameter_report["removed_vs_d_ff_768_all_layers"], 3 * 16 * 768 + 16 + 1)
 
         tokens = torch.randint(0, 32, (1, 8))
-        logits, loss = model(tokens, tokens)
+        logits, loss = model(tokens[:, :-1], tokens[:, 1:])
         loss.backward()
         self.assertEqual(generate(model, tokens[:, :3], max_new_tokens=2).shape, (1, 5))
 
@@ -66,7 +66,7 @@ class NoFFNTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             save_checkpoint(directory, model, optimizer, scheduler, 1, 8, config)
             restored, _ = load_checkpoint(directory)
-            restored_logits, _ = restored(tokens)
+            restored_logits, _ = restored(tokens[:, :-1])
         torch.testing.assert_close(restored_logits, logits, rtol=0, atol=0)
 
     @unittest.skipUnless(hasattr(torch.optim, "Muon"), "native torch.optim.Muon unavailable")
