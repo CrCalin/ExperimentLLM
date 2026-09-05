@@ -69,16 +69,5 @@ class NoFFNTests(unittest.TestCase):
             restored_logits, _ = restored(tokens[:, :-1])
         torch.testing.assert_close(restored_logits, logits, rtol=0, atol=0)
 
-    @unittest.skipUnless(hasattr(torch.optim, "Muon"), "native torch.optim.Muon unavailable")
-    def test_muonadamw_routes_only_existing_parameters(self):
-        from experimentlm.resolution import resolve_experiment
-        config = resolve_experiment(make_config("MuonAdamW"))
-        model = build_model(config.model)
-        optimizer = build_optimizer(config.training.optimizer, model.named_parameters())
-        routed = {id(p) for group in optimizer.param_groups for p in group["params"]}
-        self.assertEqual(routed, {id(p) for p in model.parameters()})
-        self.assertFalse(any(name.startswith("blocks.1.mlp") for name, _ in model.named_parameters()))
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -76,31 +76,6 @@ class ModelConfig:
 
     @classmethod
     def from_dict(cls, value: JsonObject) -> "ModelConfig":
-        if "class" not in value and "n_layers" in value:
-            d_model, n_heads = value.get("d_model", 256), value.get("n_heads", 4)
-            return cls.from_dict({
-                "class": "CausalLM", "vocab_size": value.get("vocab_size", 8192),
-                "context_length": value.get("context_length", 2048), "d_model": d_model,
-                "tie_embeddings": False,
-                "position_encoding": {"class": "RoPE", "args": {"base": value.get("rope_theta", 10000.0)}},
-                "input_embedding": {"class": "TokenEmbedding", "args": {}},
-                "layers": [{"class": "TransformerBlock", "repeat": value["n_layers"], "args": {
-                    "pre_norm": True,
-                    "norm": {"class": "RMSNorm", "args": {"eps": 1e-6}},
-                    "attention": {"class": "MultiHeadCausalSelfAttention", "args": {
-                        "n_heads": n_heads, "head_dim": d_model // n_heads, "bias": False, "dropout": 0.0,
-                    }},
-                    "mlp": {"class": "SwiGLU", "args": {
-                        "d_ff": value.get("d_ff", 704), "bias": False, "dropout": 0.0,
-                    }},
-                    "residual": {"class": "ParallelResidual", "args": {}},
-                }}],
-                "final_norm": {"class": "RMSNorm", "args": {"eps": 1e-6}},
-                "output_head": {"class": "LinearLMHead", "args": {"bias": False}},
-                "initialization": {"class": "GPTStyleInit", "args": {
-                    "std": 0.02, "scale_residual_projections": True,
-                }},
-            })
         required = {
             "class", "vocab_size", "context_length", "d_model", "tie_embeddings",
             "position_encoding", "input_embedding", "layers", "final_norm",

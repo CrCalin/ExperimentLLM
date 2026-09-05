@@ -20,7 +20,6 @@ DEFAULT_TASKS = [
     "hellaswag",
     "piqa",
     "arc_easy",
-    "boolq",
     "lambada_openai",
 ]
 
@@ -110,7 +109,7 @@ def parse_args():
     parser.add_argument(
         "--tasks",
         nargs="+",
-        choices=DEFAULT_TASKS + ["all"],
+        choices=DEFAULT_TASKS + ["boolq", "all"],
         default=["all"],
         help="Benchmarks to run",
     )

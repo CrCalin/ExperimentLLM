@@ -23,6 +23,12 @@ except ImportError:
     fla_causal_conv1d = None
     fla_rms_norm_gated = None
     chunk_gdn2 = fused_recurrent_gdn2 = naive_recurrent_gdn2 = None
+    fla_parallel_attn = None
+else:
+    try:
+        from fla.ops.attn.parallel import parallel_attn as fla_parallel_attn
+    except ImportError:
+        fla_parallel_attn = None
 
 
 def _run_chunk_gated_delta_rule(**kwargs):
@@ -227,7 +233,7 @@ class SlidingWindowCausalSelfAttention(MultiHeadCausalSelfAttention):
     context square, while retaining the exact MHA projection/QK-Norm path.
     """
     def __init__(self, d_model: int, n_heads: int, head_dim: int | None = None,
-                 window_size: int = 512, chunk_size: int = 128,
+                 window_size: int = 512, chunk_size: int = 512,
                  bias: bool = False, dropout: float = 0.0,
                  qk_norm: bool = False, qk_norm_eps: float = 1e-6,
                  head_scale: bool = False):
@@ -242,6 +248,52 @@ class SlidingWindowCausalSelfAttention(MultiHeadCausalSelfAttention):
                          query_start: int, key_start: int,
                          attention_mask: torch.Tensor | None = None) -> torch.Tensor:
         batch, _, query_length, _ = q.shape
+        if attention_mask is None and not torch.is_grad_enabled() \
+                and query_length >= self.chunk_size \
+                and query_length % self.chunk_size == 0:
+            # Batch pairs of equal-sized query chunks into one SDPA dispatch.
+            # Keys are padded only to the largest local range in each pair;
+            # no [sequence, sequence] tensor is created.
+            group_size = 2
+            chunks = []
+            for start in range(0, query_length, self.chunk_size):
+                end = start + self.chunk_size
+                first_key = max(key_start, query_start + start - self.window_size + 1)
+                last_key = min(key_start + k.size(-2), query_start + end)
+                key_slice = slice(first_key - key_start, last_key - key_start)
+                query_positions = torch.arange(query_start + start, query_start + end, device=q.device)
+                key_positions = torch.arange(first_key, last_key, device=q.device)
+                mask = (
+                    (key_positions[None, :] <= query_positions[:, None])
+                    & (key_positions[None, :] >= query_positions[:, None] - self.window_size + 1)
+                )
+                chunks.append((q[..., start:end, :], k[..., key_slice, :],
+                               v[..., key_slice, :], mask))
+            outputs = []
+            for offset in range(0, len(chunks), group_size):
+                group = chunks[offset:offset + group_size]
+                max_keys = max(item[1].size(-2) for item in group)
+                q_group = torch.stack([item[0] for item in group], dim=1)
+                k_group = torch.stack([
+                    F.pad(item[1], (0, 0, 0, max_keys - item[1].size(-2))) for item in group
+                ], dim=1)
+                v_group = torch.stack([
+                    F.pad(item[2], (0, 0, 0, max_keys - item[2].size(-2))) for item in group
+                ], dim=1)
+                mask_group = torch.stack([
+                    F.pad(item[3], (0, max_keys - item[3].size(-1))) for item in group
+                ])
+                q_group = q_group.reshape(batch * len(group), self.n_heads, self.chunk_size, self.head_dim)
+                k_group = k_group.reshape(batch * len(group), self.n_heads, max_keys, self.head_dim)
+                v_group = v_group.reshape(batch * len(group), self.n_heads, max_keys, self.head_dim)
+                mask_group = mask_group.repeat(batch, 1, 1)
+                outputs.append(_scaled_dot_product_attention(
+                    q_group, k_group, v_group, attn_mask=mask_group[:, None],
+                    dropout_p=self.dropout if self.training else 0.0, is_causal=False,
+                ).reshape(batch, len(group), self.n_heads, self.chunk_size, self.head_dim))
+            return torch.cat(outputs, dim=1).permute(0, 2, 1, 3, 4).reshape(
+                batch, self.n_heads, query_length, self.head_dim,
+            )
         outputs = []
         for start in range(0, query_length, self.chunk_size):
             end = min(start + self.chunk_size, query_length)
@@ -254,7 +306,10 @@ class SlidingWindowCausalSelfAttention(MultiHeadCausalSelfAttention):
             keys = k[..., key_slice, :]
             values = v[..., key_slice, :]
             key_positions = torch.arange(first_key, last_key, device=q.device)
-            causal = key_positions[None, :] <= query_positions[:, None]
+            causal = (
+                (key_positions[None, :] <= query_positions[:, None])
+                & (key_positions[None, :] >= query_positions[:, None] - self.window_size + 1)
+            )
             mask = causal[None, None]
             if attention_mask is not None:
                 valid = attention_mask[:, first_key:last_key].to(device=q.device, dtype=torch.bool)
@@ -272,9 +327,16 @@ class SlidingWindowCausalSelfAttention(MultiHeadCausalSelfAttention):
         q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
         q, k = self._normalize_qk(q, k)
         q, k = position_encoding.apply(q, k)
+        q, k = q.to(v.dtype), k.to(v.dtype)
         if hasattr(self, "head_scale"):
             q = q * self.head_scale.to(dtype=q.dtype)[None, :, None, None]
-        y = self._local_attention(q, k, v, 0, 0, attention_mask)
+        if x.is_cuda and attention_mask is None and fla_parallel_attn is not None:
+            y = fla_parallel_attn(
+                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+                scale=self.head_dim ** -0.5, window_size=self.window_size,
+            ).transpose(1, 2)
+        else:
+            y = self._local_attention(q, k, v, 0, 0, attention_mask)
         return self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
 
     def forward_cached(self, x: torch.Tensor, position_encoding: PositionEncoding,
@@ -308,7 +370,8 @@ class SlidingWindowCausalSelfAttention(MultiHeadCausalSelfAttention):
 class GroupedQueryCausalSelfAttention(Attention):
     """Causal attention with independent query heads and shared KV heads."""
     def __init__(self, d_model: int, n_q_heads: int, n_kv_heads: int,
-                 head_dim: int = 64, bias: bool = False, dropout: float = 0.0):
+                 head_dim: int = 64, bias: bool = False, dropout: float = 0.0,
+                 qk_norm: bool = False, qk_norm_eps: float = 1e-6):
         super().__init__()
         if n_q_heads <= 0 or n_kv_heads <= 0 or head_dim <= 0:
             raise ValueError("GQA head counts and head_dim must be positive")
@@ -324,18 +387,28 @@ class GroupedQueryCausalSelfAttention(Attention):
         # Q/KV head counts. Native enable_gqa works there, but dispatches to
         # the math kernel; use the fused path with explicit KV expansion.
         self._native_gqa = torch.version.hip is None
-        self.q_proj = nn.Linear(d_model, n_q_heads * head_dim, bias=bias)
-        self.k_proj = nn.Linear(d_model, n_kv_heads * head_dim, bias=bias)
-        self.v_proj = nn.Linear(d_model, n_kv_heads * head_dim, bias=bias)
+        # Pack Q/K/V into one GEMM.  Separate Q/K/V linears launch three
+        # small kernels at this model size and erase much of GQA's benefit.
+        self.qkv = nn.Linear(d_model, (n_q_heads + 2 * n_kv_heads) * head_dim, bias=bias)
         self.out = nn.Linear(d_model, d_model, bias=bias)
         self.out.residual_projection = True
+        self.q_norm = RMSNorm(head_dim, qk_norm_eps) if qk_norm else None
+        self.k_norm = RMSNorm(head_dim, qk_norm_eps) if qk_norm else None
 
     def _project(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         batch, length, _ = x.shape
-        q = self.q_proj(x).view(batch, length, self.n_q_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(x).view(batch, length, self.n_kv_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(x).view(batch, length, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        q_size = self.n_q_heads * self.head_dim
+        kv_size = self.n_kv_heads * self.head_dim
+        q, k, v = self.qkv(x).split((q_size, kv_size, kv_size), dim=-1)
+        q = q.view(batch, length, self.n_q_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch, length, self.n_kv_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch, length, self.n_kv_heads, self.head_dim).transpose(1, 2)
         return q, k, v
+
+    def _normalize_qk(self, q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.q_norm is not None:
+            q, k = self.q_norm(q), self.k_norm(k)
+        return q, k
 
     def _sdpa(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
               *, is_causal: bool, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
@@ -355,6 +428,7 @@ class GroupedQueryCausalSelfAttention(Attention):
                 position_encoding: PositionEncoding) -> torch.Tensor:
         batch, length, _ = x.shape
         q, k, v = self._project(x)
+        q, k = self._normalize_qk(q, k)
         q, k = position_encoding.apply(q, k)
         if attention_mask is None:
             y = self._sdpa(q, k, v, is_causal=True)
@@ -369,6 +443,7 @@ class GroupedQueryCausalSelfAttention(Attention):
         batch, length, _ = x.shape
         q, k, v = self._project(x)
         offset = 0 if past is None else past[0].size(-2)
+        q, k = self._normalize_qk(q, k)
         q, k = position_encoding.apply(q, k, offset)
         if past is not None:
             past_length = past[0].size(-2)
@@ -382,6 +457,84 @@ class GroupedQueryCausalSelfAttention(Attention):
             y = self._sdpa(q, k, v, is_causal=True)
         output = self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
         return output, (k, v)
+
+
+@ATTENTIONS.register
+class GroupedQuerySlidingWindowCausalSelfAttention(GroupedQueryCausalSelfAttention):
+    """Grouped-query causal attention restricted to a fixed local window."""
+    def __init__(self, d_model: int, n_q_heads: int, n_kv_heads: int,
+                 head_dim: int = 64, window_size: int = 512, chunk_size: int = 512,
+                 bias: bool = False, dropout: float = 0.0,
+                 qk_norm: bool = False, qk_norm_eps: float = 1e-6):
+        super().__init__(d_model, n_q_heads, n_kv_heads, head_dim, bias, dropout,
+                         qk_norm, qk_norm_eps)
+        if window_size <= 0 or chunk_size <= 0:
+            raise ValueError("SWA window_size and chunk_size must be positive")
+        self.n_heads = n_q_heads
+        self.window_size = window_size
+        self.chunk_size = chunk_size
+
+    def _expand_kv(self, k: torch.Tensor, v: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        repeats = self.n_q_heads // self.n_kv_heads
+        # Expand each KV head across its query group without allocating a
+        # second KV cache.  SDPA can consume the resulting strided view.
+        def expand(value: torch.Tensor) -> torch.Tensor:
+            batch, _, length, head_dim = value.shape
+            return value[:, :, None].expand(batch, self.n_kv_heads, repeats, length, head_dim).reshape(
+                batch, self.n_q_heads, length, head_dim,
+            )
+        return expand(k), expand(v)
+
+    def _local_attention(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                         query_start: int, key_start: int,
+                         attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+        return SlidingWindowCausalSelfAttention._local_attention(
+            self, q, k, v, query_start, key_start, attention_mask,
+        )
+
+    def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
+                position_encoding: PositionEncoding) -> torch.Tensor:
+        batch, length, _ = x.shape
+        q, k, v = self._project(x)
+        q, k = self._normalize_qk(q, k)
+        q, k = position_encoding.apply(q, k)
+        q, k = q.to(v.dtype), k.to(v.dtype)
+        if x.is_cuda and attention_mask is None and fla_parallel_attn is not None:
+            # FLA supports GQA directly (`HQ` divisible by `H`) and keeps the
+            # two KV heads compressed inside the fused SWA kernel.
+            y = fla_parallel_attn(
+                q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2),
+                scale=self.head_dim ** -0.5, window_size=self.window_size,
+            ).transpose(1, 2)
+        else:
+            k, v = self._expand_kv(k, v)
+            y = self._local_attention(q, k, v, 0, 0, attention_mask)
+        return self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
+
+    def forward_cached(self, x: torch.Tensor, position_encoding: PositionEncoding,
+                       past: dict | None = None):
+        batch, length, _ = x.shape
+        previous_length = 0 if past is None else past["length"]
+        past_k = None if past is None else past["k"]
+        past_v = None if past is None else past["v"]
+        q, k, v = self._project(x)
+        q, k = self._normalize_qk(q, k)
+        q, k = position_encoding.apply(q, k, previous_length)
+        if past_k is not None:
+            k = torch.cat((past_k, k), dim=-2)
+            v = torch.cat((past_v, v), dim=-2)
+        key_start = previous_length - (0 if past_k is None else past_k.size(-2))
+        expanded_k, expanded_v = self._expand_kv(k, v)
+        y = self._local_attention(q.to(expanded_v.dtype), expanded_k.to(expanded_v.dtype),
+                                  expanded_v, previous_length, key_start)
+        keep = max(0, self.window_size - 1)
+        new_cache = {
+            "length": previous_length + length,
+            "k": k[..., -keep:, :] if keep else k[..., :0, :],
+            "v": v[..., -keep:, :] if keep else v[..., :0, :],
+        }
+        output = self.out(y.transpose(1, 2).contiguous().view(batch, length, -1))
+        return output, new_cache
 
 
 class GatedRMSNorm(nn.Module):
@@ -770,9 +923,77 @@ class GatedDeltaNet2LinearAttention(Attention):
         new_cache = sequence[..., -self.conv_size:]
         return y, new_cache if output_final_state else None
 
+    def _prepare_recurrence_inputs(self, x: torch.Tensor,
+                                   attention_mask: torch.Tensor | None = None,
+                                   pack_projections: bool = False):
+        """Build the GDN2 streams shared by writer-only and writer-reader paths."""
+        batch, length, _ = x.shape
+        if pack_projections:
+            # The three projections consume the same input.  At the small
+            # model widths used here, one larger GEMM is cheaper than three
+            # independent dispatches.  ``cat`` preserves parameter identity
+            # and therefore normal gradient accumulation/checkpoint names.
+            qkv_size = sum(self.projection_sizes)
+            projected = F.linear(x, torch.cat((
+                self.qkv_proj_weight, self.fg_proj.weight, self.bw_proj_weight,
+            ), dim=0))
+            projected, fg, bw = torch.split(
+                projected, (qkv_size, 2 * self.head_v_dim,
+                            self.key_dim + self.value_dim), dim=-1,
+            )
+        else:
+            projected = F.linear(x, self.qkv_proj_weight)
+            fg = self.fg_proj(x)
+            bw = F.linear(x, self.bw_proj_weight)
+        q, k, v = torch.split(projected, self.projection_sizes, dim=-1)
+        if self.use_short_conv:
+            if not hasattr(self, "qkv_conv_weight"):
+                raise RuntimeError("writer-reader GDN2 currently requires packed short-conv weights")
+            # ``projected`` is already laid out as the packed QKV stream.
+            # Avoid split -> cat and its full-width temporary before the
+            # depthwise convolution.
+            qkv = projected
+            if x.is_cuda:
+                if fla_causal_conv1d is None:
+                    raise RuntimeError("CUDA GDN2 execution requires FLA causal_conv1d")
+                qkv, _ = fla_causal_conv1d(
+                    qkv, weight=self.qkv_conv_weight.squeeze(1), bias=None,
+                    initial_state=None, output_final_state=False,
+                    activation="silu", backend="triton",
+                )
+            else:
+                sequence = qkv.transpose(1, 2)
+                y = F.conv1d(F.pad(sequence, (self.conv_size - 1, 0)), self.qkv_conv_weight,
+                             None, groups=sequence.size(1))
+                qkv = F.silu(y.transpose(1, 2))
+            q, k, v = torch.split(qkv, self.projection_sizes, dim=-1)
+        else:
+            q, k, v = F.silu(q), F.silu(k), F.silu(v)
+        f_hidden, g_hidden = torch.split(fg, self.head_v_dim, dim=-1)
+        f = self.f_out_proj(f_hidden).float().view(batch, length, self.n_heads, self.head_dim)
+        g = -self.A_log.float().exp().view(1, 1, self.n_heads, 1) * F.softplus(
+            f + self.dt_bias.view(1, 1, self.n_heads, self.head_dim),
+        )
+        q = q.view(batch, length, self.n_heads, self.head_dim)
+        k = k.view(batch, length, self.n_heads, self.head_dim)
+        v = v.view(batch, length, self.num_v_heads, self.head_v_dim)
+        b, w = torch.split(bw, (self.key_dim, self.value_dim), dim=-1)
+        b = b.sigmoid().view(batch, length, self.n_heads, self.head_dim)
+        w = w.sigmoid().view(batch, length, self.num_v_heads, self.head_v_dim)
+        if self.num_v_heads > self.n_heads:
+            groups = self.num_v_heads // self.n_heads
+            q, k, g, b = (t.repeat_interleave(groups, dim=2) for t in (q, k, g, b))
+        if self.allow_neg_eigval:
+            b = b * 2.0
+        if attention_mask is not None:
+            mask = attention_mask.to(device=x.device, dtype=q.dtype)[:, :, None, None]
+            q, k, v, g, b, w = (t * mask for t in (q, k, v, g, b, w))
+        return q, k, v, g, b, w, g_hidden
+
     def _forward_impl(self, x: torch.Tensor, state: torch.Tensor | None,
                       attention_mask: torch.Tensor | None, output_final_state: bool,
-                      conv_state=None, use_cache: bool = False):
+                      conv_state=None, use_cache: bool = False,
+                      return_recurrence_inputs: bool = False):
         batch, length, _ = x.shape
         if attention_mask is not None and attention_mask.shape != (batch, length):
             raise ValueError("attention_mask must have shape (batch, sequence)")
@@ -782,7 +1003,9 @@ class GatedDeltaNet2LinearAttention(Attention):
         if self.use_short_conv:
             old = conv_state or (None, None, None)
             if hasattr(self, "qkv_conv_weight"):
-                qkv = torch.cat((q, k, v), dim=-1)
+                # The projection output already has the exact packed QKV
+                # layout expected by the depthwise short convolution.
+                qkv = projected
                 if x.is_cuda:
                     if fla_causal_conv1d is None:
                         raise RuntimeError("CUDA GDN2 execution requires FLA causal_conv1d")
@@ -861,7 +1084,10 @@ class GatedDeltaNet2LinearAttention(Attention):
                                             output_final_state=output_final_state)
         gate = self.g_out_proj(g_hidden).view(batch, length, self.num_v_heads, self.head_v_dim)
         y = self.o_norm(y, gate).reshape(batch, length, self.value_dim)
-        return self.o_proj(y), (state if output_final_state else None), new_conv_state
+        result = self.o_proj(y), (state if output_final_state else None), new_conv_state
+        if return_recurrence_inputs:
+            result = result + ((q, k, v, g, b, w),)
+        return result
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor:
@@ -872,23 +1098,7 @@ class GatedDeltaNet2LinearAttention(Attention):
         return self._forward_impl(x, state, None, True, conv_state, True) + (None,)
 
 
-@ROUTINGS.register
-class LowRankValueRouting(nn.Module):
-    def __init__(self, value_dim: int, d_model: int, rank: int, zero_init_output: bool = True,
-                 placement: str = "pre_ffn"):
-        super().__init__()
-        if value_dim <= 0 or d_model <= 0 or rank <= 0:
-            raise ValueError("value routing dimensions and rank must be positive")
-        if placement not in {"pre_ffn", "post_block"}:
-            raise ValueError("value routing placement must be pre_ffn or post_block")
-        self.placement = placement
-        self.down = nn.Linear(value_dim, rank, bias=False)
-        self.up = nn.Linear(rank, d_model, bias=False)
-        if zero_init_output:
-            self.up.zero_init_output = True
 
-    def forward(self, value: torch.Tensor) -> torch.Tensor:
-        return self.up(self.down(value))
 
 
 @MLPS.register
@@ -949,53 +1159,16 @@ class GatedResidual(Residual):
         return block.add_value_route(x, route, "post_block")
 
 
-@RESIDUALS.register
-class ChannelGatedResidual(Residual):
-    """Sequential pre-norm residual branches with per-channel gates."""
-    def __init__(self, d_model: int, attention_gate_init: float = 1.0,
-                 mlp_gate_init: float = 1.0):
-        super().__init__()
-        if d_model <= 0:
-            raise ValueError("ChannelGatedResidual d_model must be positive")
-        self.attention_gate = nn.Parameter(torch.full((d_model,), float(attention_gate_init)))
-        self.mlp_gate = nn.Parameter(torch.full((d_model,), float(mlp_gate_init)))
-        set_optimizer_policy(self.attention_gate, "adamw", "channel_residual_gate")
-        set_optimizer_policy(self.mlp_gate, "adamw", "channel_residual_gate")
-
-    def forward(self, block: "TransformerBlock", x: torch.Tensor,
-                attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
-        if not block.pre_norm: raise ValueError("ChannelGatedResidual requires pre_norm=true")
-        attn, route = block.attention_with_route(block.norm1(x), attention_mask, position_encoding)
-        x = x + self.attention_gate * attn
-        x = block.add_value_route(x, route, "pre_ffn")
-        if block.mlp is None:
-            return block.add_value_route(x, route, "post_block")
-        x = x + self.mlp_gate * block.mlp(block.norm2(x))
-        return block.add_value_route(x, route, "post_block")
-
-
-@RESIDUALS.register
-class ParallelResidual(Residual):
-    """Original ExperimentLM baseline: both branches consume the same residual stream."""
-    def __init__(self): super().__init__()
-
-    def forward(self, block: "TransformerBlock", x: torch.Tensor,
-                attention_mask: torch.Tensor | None, position_encoding: PositionEncoding) -> torch.Tensor:
-        if not block.pre_norm: raise ValueError("ParallelResidual currently requires pre_norm=true")
-        attn, route = block.attention_with_route(block.norm1(x), attention_mask, position_encoding)
-        x = x + attn
-        x = block.add_value_route(x, route, "pre_ffn")
-        if block.mlp is None:
-            return block.add_value_route(x, route, "post_block")
-        x = x + block.mlp(block.norm2(x))
-        return block.add_value_route(x, route, "post_block")
-
-
 @BLOCKS.register
 class TransformerBlock(Block):
     def __init__(self, d_model: int, pre_norm: bool, norm: dict, attention: dict,
-                 mlp: dict | None, residual: dict, value_routing: dict | None = None):
+                 mlp: dict | None, residual: dict, value_routing: dict | None = None,
+                 d_model_override: int | None = None):
         super().__init__()
+        d_model = d_model if d_model_override is None else d_model_override
+        if d_model <= 0:
+            raise ValueError("TransformerBlock d_model_override must be positive")
+        self.model_dim = d_model
         self.pre_norm = pre_norm
         norm_spec = ComponentSpec.from_dict(norm, "TransformerBlock.args.norm")
         attention_spec = ComponentSpec.from_dict(attention, "TransformerBlock.args.attention")
@@ -1019,12 +1192,7 @@ class TransformerBlock(Block):
         residual_args = dict(residual_spec.args)
         if mlp is None and residual_spec.class_name == "GatedResidual":
             residual_args["mlp_gate_init"] = None
-        if residual_spec.class_name == "ChannelGatedResidual":
-            self.residual = RESIDUALS.create(
-                residual_spec.class_name, d_model=d_model, **residual_args,
-            )
-        else:
-            self.residual = RESIDUALS.create(residual_spec.class_name, **residual_args)
+        self.residual = RESIDUALS.create(residual_spec.class_name, **residual_args)
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor:
@@ -1041,32 +1209,21 @@ class TransformerBlock(Block):
 
 
 @BLOCKS.register
-class DoubleNormTransformerBlock(Block):
-    """Sequential residual block with learned pre- and post-sublayer norms."""
-    def __init__(self, d_model: int, pre_attn_norm: dict, post_attn_norm: dict,
-                 pre_mlp_norm: dict, post_mlp_norm: dict, attention: dict, mlp: dict):
+class FFNOnlyBlock(Block):
+    """Explicit pre-norm feed-forward residual block without a mixer."""
+    def __init__(self, d_model: int, norm: dict, mlp: dict):
         super().__init__()
-        norm_specs = {
-            "pre_attn_norm": ComponentSpec.from_dict(pre_attn_norm, "DoubleNormTransformerBlock.args.pre_attn_norm"),
-            "post_attn_norm": ComponentSpec.from_dict(post_attn_norm, "DoubleNormTransformerBlock.args.post_attn_norm"),
-            "pre_mlp_norm": ComponentSpec.from_dict(pre_mlp_norm, "DoubleNormTransformerBlock.args.pre_mlp_norm"),
-            "post_mlp_norm": ComponentSpec.from_dict(post_mlp_norm, "DoubleNormTransformerBlock.args.post_mlp_norm"),
-        }
-        self.pre_attn_norm = NORMS.create(norm_specs["pre_attn_norm"].class_name, d_model, **norm_specs["pre_attn_norm"].args)
-        self.post_attn_norm = NORMS.create(norm_specs["post_attn_norm"].class_name, d_model, **norm_specs["post_attn_norm"].args)
-        self.pre_mlp_norm = NORMS.create(norm_specs["pre_mlp_norm"].class_name, d_model, **norm_specs["pre_mlp_norm"].args)
-        self.post_mlp_norm = NORMS.create(norm_specs["post_mlp_norm"].class_name, d_model, **norm_specs["post_mlp_norm"].args)
-        attention_spec = ComponentSpec.from_dict(attention, "DoubleNormTransformerBlock.args.attention")
-        mlp_spec = ComponentSpec.from_dict(mlp, "DoubleNormTransformerBlock.args.mlp")
-        self.attn = ATTENTIONS.create(attention_spec.class_name, d_model, **attention_spec.args)
+        norm_spec = ComponentSpec.from_dict(norm, "FFNOnlyBlock.args.norm")
+        mlp_spec = ComponentSpec.from_dict(mlp, "FFNOnlyBlock.args.mlp")
+        self.norm = NORMS.create(norm_spec.class_name, d_model, **norm_spec.args)
         self.mlp = MLPS.create(mlp_spec.class_name, d_model, **mlp_spec.args)
 
     def forward(self, x: torch.Tensor, attention_mask: torch.Tensor | None,
                 position_encoding: PositionEncoding) -> torch.Tensor:
-        x = x + self.post_attn_norm(self.attn(
-            self.pre_attn_norm(x), attention_mask, position_encoding,
-        ))
-        return x + self.post_mlp_norm(self.mlp(self.pre_mlp_norm(x)))
+        return x + self.mlp(self.norm(x))
+
+
+@BLOCKS.register
 
 
 @HEADS.register
@@ -1156,6 +1313,10 @@ class CausalLM(nn.Module):
         x = self.wte(input_ids)
         new_layers = []
         for block, layer_cache in zip(self.blocks, cache["layers"]):
+            if isinstance(block, FFNOnlyBlock):
+                x = block(x, None, self.position_encoding)
+                new_layers.append(None)
+                continue
             if not isinstance(block, TransformerBlock) or block.pre_norm is not True:
                 raise ValueError("cached generation requires pre-norm TransformerBlock layers")
             if isinstance(block.attn, SlidingWindowCausalSelfAttention):
@@ -1201,14 +1362,15 @@ class CausalLM(nn.Module):
     def parameter_report(self) -> dict[str, int]:
         block_counts = [sum(p.numel() for p in block.parameters()) for block in self.blocks]
         mha = sum(n for block, n in zip(self.blocks, block_counts)
-                  if isinstance(block.attn, MultiHeadCausalSelfAttention))
+                  if isinstance(getattr(block, "attn", None), MultiHeadCausalSelfAttention))
         delta = sum(n for block, n in zip(self.blocks, block_counts)
-                    if isinstance(block.attn, (DeltaNetLinearAttention, GatedDeltaNet2LinearAttention)))
+                    if isinstance(getattr(block, "attn", None), (DeltaNetLinearAttention, GatedDeltaNet2LinearAttention)))
         ffn = sum(sum(p.numel() for p in block.mlp.parameters())
                   for block in self.blocks if block.mlp is not None)
-        absent = [block for block in self.blocks if block.mlp is None]
+        absent = [block for block in self.blocks
+                  if hasattr(block, "attn") and block.mlp is None]
         removed = len(absent) * 3 * self.config.d_model * 768
-        removed += sum(self.config.d_model + (isinstance(block.residual, GatedResidual))
+        removed += sum(self.config.d_model + (isinstance(getattr(block, "residual", None), GatedResidual))
                        for block in absent)
         return {
             "total": self.num_parameters,

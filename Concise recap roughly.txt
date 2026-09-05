@@ -1,0 +1,90 @@
+Concise recap, roughly in the order we explored things:
+
+* Baseline Transformer cleanup: settled on sequential pre-norm RMSNorm + SwiGLU + RoPE. Head dim 64 emerged as the best practical default; 32 and 128 were worse/slower in earlier MHA tests.
+
+* Scalar residual gates: positive. Kept. Later channel-wise gates were slightly worse, and smoothed/profiled initializations helped early but not final quality.
+
+* Tied embeddings: initially deferred for scaling reasons, later revisited deliberately because embeddings dominate 10M parameter count. Full-rank tying was a clear win because it freed enough parameters to deepen the network.
+
+* Projected embeddings (`d_embed=128`): failed. Worse quality and slower despite freeing parameters; likely output-rank bottleneck. Dropped.
+
+* QK-Norm: strong win. Adopted on attention layers.
+
+* Per-head attention scaling on top of QK-Norm: slightly positive early, worse later. Rejected.
+
+* CLVR: tiny quality gain (~0.0066 loss) but 3–4% slower. Kept only as an optional branch.
+
+* GQA on attention: older GDN1-era test was not convincing. Revisited on the newer scalable topology with 4Q/2KV: about +0.0057 val loss, but ~3–4% faster, ~200k fewer params, and half KV cache. Accepted as a scalability tradeoff.
+
+* GDN1: substantially better architectural direction than pure MHA and reasonably fast.
+
+* GDN2: clear quality improvement over GDN1, about -0.0256 full-val loss at 10M, but ~18% slower. Adopted because the quality gain looked meaningful and likely scalable.
+
+* GDN2 `expand_v=2`: slower and worse than `expand_v=1`. Rejected. May revisit after scaling param counts.
+
+* GDN2 value-head sharing / `num_v_heads < n_heads`: unsupported by FLA semantics. Dropped.
+
+* WSD schedule: strong win over cosine. Original 85/15 WSD gave ~-0.038 val loss on QKNorm baseline. Later shifted to 75% stable / 15% decay / 10% min-LR hold; earlier cooldown seemed useful, min-LR hold less clearly so.
+
+* SWA/local attention: at 2K it was slightly slower than global MHA, but at 100M/8K it became ~9% faster. Quality was essentially tied. Kept as a scalable long-context feature.
+
+* Central global attention: retained because it gives one exact global retrieval stage after representations have matured, with downstream layers available to integrate it. Worth moving it around for testing.
+
+* 100M scale check: QKNorm + WSD validated strongly, improving full-val by ~0.044 versus the older 100M hybrid. This increased confidence that the recipe scales.
+
+* Hierarchical 4:1 compression: computationally excellent, quality disastrous. Both decompression and causal cross-attention memory variants failed badly. Wider low-rate width did not rescue it. Conclusion: fixed 4:1 token compression is too destructive in this regime.
+
+* Deep tied model: tied embeddings enabled a 9-stage model. Full 9-layer/6-GDN2 version looked better early but was very slow.
+
+* FFN-only stages: major useful result. Replacing two GDN2 mixers with FFN-only stages preserved 9-layer depth while reducing recurrent compute. This produced the current strong architecture family.
+
+* Concentrating FFN capacity into the two FFN-only blocks: no benefit; slightly slower and no quality gain. Distributed FFN width was better.
+
+* Uniform `d_ff=768` vs `832`: 832 cost ~2–3% throughput and ~442k params, but improved full-val by ~0.0113 and helped benchmarks. `832` became the preferred width.
+
+* Current best completed model before the new fused experiment:
+  `SWA → GDN2 → FFN → GDN2 → Global GQA → GDN2 → FFN → GDN2 → SWA`
+  with tied embeddings, `d_ff=832`, 4Q/2KV attention, GDN2 4×64.
+  Full val: ~3.2011.
+  Throughput: ~261–263k tok/s.
+
+* GDN2 head geometry:
+
+  * `8×32`: slower than `4×64`; quality not valuable enough to justify.
+  * `2×128`: also slower.
+  * Conclusion: 4×64 is a strong hardware sweet spot on the 7900 XTX.
+
+* Residual-gate inspection of current best:
+
+  * first SWA mixer gate extremely small: ~0.085
+  * GDN2 mixer gates rise with depth: ~0.60 → 0.69 → 0.86 → 1.10
+  * final SWA also strong: ~0.72
+    This suggested the first SWA is the cleanest mixer to remove/change.
+
+* GDN2 state diagnostics:
+
+  * all four GDN2s actively update state; none is naturally “read-only”
+  * update ratios ~0.53–0.71
+  * retention rises strongly with depth, ~0.67 → 0.90
+  * final GDN2 is both the strongest reader and strongest writer
+    So “turn an existing GDN2 read-only” was not supported.
+
+* Materialized read-only GDN2: failed as an implementation strategy. Strict causality required exposing every prefix state, producing a ~1 GiB FP32 state tensor at B8/T2048. With conversion cost, one reader was ~179% of a full GDN2. Rejected.
+
+* Fused writer+reader GDN2: much more promising.
+
+  * no per-token state materialization
+  * forward: ~131% of one GDN2
+  * forward+backward: ~150%
+  * two full GDN2s: ~197% forward / ~204% backward
+  * recurrence gradients verified bit-exact; end-to-end numerical error small
+  * memory overhead modest compared with the materialized version
+    This turns “one writer + second learned read of the same state” into a viable primitive.
+
+* New topology now training:
+  `GDN2(writer+reader) → FFN → Global GQA → GDN2(writer+reader) → FFN → GDN2(full) → SWA`
+  Architecturally still 9 residual stages:
+  `writer → reader → FFN → GQA → writer → reader → FFN → GDN2 → SWA`
+
+The biggest durable lessons so far are: GDN2 quality is real but expensive; FFN depth is cheap and useful; fixed hierarchical compression was too destructive; tied embeddings are very valuable at 10M; and sharing a recurrent state is viable only when the extra read is fused into the recurrence rather than exposed between layers.
+

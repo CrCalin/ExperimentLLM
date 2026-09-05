@@ -18,7 +18,7 @@ from .config import ExperimentConfig
 from .data import TokenStream
 from .evaluation import evaluate_loss
 from .model import build_model
-from .optim import build_optimizer, build_schedule
+from .optim import build_optimizer, build_schedule, prepare_model_for_optimizer
 from .resolution import resolve_experiment
 
 
@@ -67,6 +67,7 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
         if total_steps < 1: raise ValueError("configuration produces zero optimizer steps")
 
         model = build_model(model_config).to(device)
+        model = prepare_model_for_optimizer(training.optimizer, model)
         optimizer = build_optimizer(training.optimizer, model.named_parameters())
         scheduler = build_schedule(training.schedule, optimizer, total_steps)
         start, tokens_seen = 0, 0

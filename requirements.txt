@@ -1,0 +1,16 @@
+# Core runtime. The project is developed against the ROCm 7.2 build.
+torch==2.13.0+rocm7.2
+numpy
+tqdm
+
+# Model architecture and tokenizer support.
+fla-core[rocm]==0.5.2
+tokenizers
+transformers
+
+# Dataset acquisition.
+datasets
+boto3
+
+# lm-evaluation benchmark support.
+lm-eval
