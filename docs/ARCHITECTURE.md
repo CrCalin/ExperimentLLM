@@ -20,7 +20,9 @@ This is the orientation document for architecture and training work. Read it bef
 | `experimentlm/config.py` | Validated internal config dataclasses and JSON parsing |
 | `experimentlm/resolution.py` | Registry validation, constructor-default expansion, repeat expansion output |
 | `experimentlm/registry.py` | Explicit registries; no dynamic imports |
-| `experimentlm/model.py` | Component interfaces, registered baseline components, `CausalLM`, `build_model` |
+| `experimentlm/components/` | Component interfaces and registered component implementations |
+| `experimentlm/architectures/causal_lm.py` | `CausalLM`, its compatibility alias, and `build_model` |
+| `experimentlm/model.py` | Compatibility re-exports for historical imports |
 | `experimentlm/optim.py` | Optimizer and LR-schedule interfaces/factories |
 | `experimentlm/data.py` | Deterministic memory-mapped token stream |
 | `experimentlm/evaluation.py` | Held-out loss/perplexity evaluation |
@@ -118,12 +120,26 @@ The baseline state-dict names (`wte`, `blocks`, `norm_f`, `lm_head`, and block `
 
 ## Adding an architecture experiment
 
-1. Implement the smallest appropriate interface in `experimentlm/model.py`, or in a focused new module.
+1. Implement the smallest appropriate interface in a focused module under `experimentlm/components/` or `experimentlm/architectures/`.
 2. Register the class in the matching explicit registry.
 3. If it is in a new module, add an explicit package import for registration.
 4. Reference the exact class name and arguments in a new JSON config.
 5. Add a focused construction/forward test. For a new block family, test it in a heterogeneous stack.
 6. Do not branch on the new class in `trainer.py`.
+
+## Auxiliary matrix memory
+
+`MatrixMemoryTransformerBlock` retains full-sequence causal attention and adds
+one independent local square-matrix memory per layer in the order attention,
+memory read, MLP, local write, residual addition. Blocks execute layer-major;
+there is no shared global recurrent state. Runtime matrices are zeroed per
+forward call, use the active autocast dtype, and are absent from checkpoints.
+
+Configure the nested registered `MatrixMemory` with `d_memory` and `backend`.
+`chunked` is the compiled static-chunk backend, `scan` is the PyTorch scan
+comparison, and `reference` is a Python-loop correctness oracle. See
+`configs/matrix_memory_transformer.json` and `docs/MATRIX_MEMORY.md` for
+configuration, performance results, and current compile limitations.
 
 A custom SSM or recurrent block should implement `Block`; it does not need fake attention or MLP components. A new attention, norm, MLP, residual strategy, embedding, head, or position encoding can plug into `TransformerBlock` through its corresponding nested component spec.
 

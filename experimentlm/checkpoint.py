@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from .config import ExperimentConfig, ModelConfig
-from .model import build_model
+from .architectures.causal_lm import build_model
 
 
 def _legacy_model_config(value: dict) -> ModelConfig:

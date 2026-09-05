@@ -17,7 +17,7 @@ from .checkpoint import load_checkpoint, save_checkpoint
 from .config import ExperimentConfig
 from .data import TokenStream
 from .evaluation import evaluate_loss
-from .model import build_model
+from .architectures.causal_lm import build_model
 from .optim import build_optimizer, build_schedule, prepare_model_for_optimizer
 from .resolution import resolve_experiment
 
