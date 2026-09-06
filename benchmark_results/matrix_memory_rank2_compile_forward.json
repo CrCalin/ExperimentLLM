@@ -1,0 +1,104 @@
+{
+  "config": {
+    "class": "MatrixMemoryBenchmark",
+    "args": {
+      "batch_sizes": [
+        8
+      ],
+      "sequence_lengths": [
+        2048
+      ],
+      "memory_dimensions": [
+        64
+      ],
+      "chunk_sizes": [
+        128
+      ],
+      "warmup": 1,
+      "iterations": 3,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "backward": false,
+      "compile": true,
+      "profile": false,
+      "output": "benchmark_results/matrix_memory_rank2_compile_forward.json"
+    }
+  },
+  "environment": {
+    "torch": "2.14.0+rocm7.14",
+    "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+    "gpu": "AMD Radeon RX 7900 XTX",
+    "rocm": "7.14.60850",
+    "triton": null
+  },
+  "results": [
+    {
+      "status": "ok",
+      "backend": "reference",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": false,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.07090762799998629,
+      "tokens_per_second": 231061.17722628047,
+      "peak_vram_gib": 0.04309272766113281,
+      "profile": [],
+      "profile_wall_seconds": null,
+      "autograd_saved_tensor_bytes": null
+    },
+    {
+      "status": "failed",
+      "backend": "chunked",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": false,
+      "error": "NotImplementedError: \"triangular_solve_cuda\" not implemented for 'BFloat16'"
+    },
+    {
+      "status": "ok",
+      "backend": "wy",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": false,
+      "compiled": true,
+      "compile_seconds": 7.570262451999952,
+      "graph_breaks": 0,
+      "seconds": 0.0038078659999882802,
+      "tokens_per_second": 4302672.415481644,
+      "peak_vram_gib": 0.047607421875,
+      "profile": [],
+      "profile_wall_seconds": null,
+      "autograd_saved_tensor_bytes": null
+    },
+    {
+      "status": "ok",
+      "backend": "rank2",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": false,
+      "compiled": true,
+      "compile_seconds": 11.65118818799965,
+      "graph_breaks": 0,
+      "seconds": 0.0038007719995221123,
+      "tokens_per_second": 4310703.1945247,
+      "peak_vram_gib": 0.0478515625,
+      "profile": [],
+      "profile_wall_seconds": null,
+      "autograd_saved_tensor_bytes": null
+    }
+  ]
+}

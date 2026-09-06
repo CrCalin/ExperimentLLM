@@ -1,0 +1,334 @@
+{
+  "config": {
+    "class": "MatrixMemoryBenchmark",
+    "args": {
+      "batch_sizes": [
+        8
+      ],
+      "sequence_lengths": [
+        2048
+      ],
+      "memory_dimensions": [
+        64
+      ],
+      "chunk_sizes": [
+        128
+      ],
+      "warmup": 1,
+      "iterations": 1,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "backward": true,
+      "compile": false,
+      "profile": true,
+      "output": "benchmark_results/matrix_memory_fused_wy_profile.json"
+    }
+  },
+  "environment": {
+    "torch": "2.14.0+rocm7.14",
+    "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+    "gpu": "AMD Radeon RX 7900 XTX",
+    "rocm": "7.14.60850",
+    "triton": null
+  },
+  "results": [
+    {
+      "status": "ok",
+      "backend": "reference",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.5914903859993501,
+      "tokens_per_second": 27699.520377357414,
+      "peak_vram_gib": 0.3377695083618164,
+      "profile": [],
+      "profile_wall_seconds": 2.200807735000126,
+      "profile_summary": {
+        "device_event_count_proxy": 251957,
+        "device_event_key_count_proxy": 52
+      },
+      "autograd_saved_tensor_bytes": 419495936
+    },
+    {
+      "status": "unsupported",
+      "backend": "chunked",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "error": "exact chunked matrix memory requires a BF16 triangular solve, but torch.linalg.solve_triangular is unavailable on cuda:0. The production BF16 chunk backend is therefore blocked; FP32 is available for diagnostic correctness/performance runs."
+    },
+    {
+      "status": "ok",
+      "backend": "wy",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.013836422000167659,
+      "tokens_per_second": 1184121.1550067982,
+      "peak_vram_gib": 0.1138010025024414,
+      "profile": [
+        {
+          "name": "construct_U_Z",
+          "calls": 32,
+          "self_cpu_us": 292.14000000000027,
+          "self_device_us": 527.4720000000008,
+          "total_cpu_us": 921.1179999999996,
+          "total_device_us": 855.5080000000038
+        },
+        {
+          "name": "compact_gram",
+          "calls": 32,
+          "self_cpu_us": 218.586999999998,
+          "self_device_us": 405.31099999999776,
+          "total_cpu_us": 891.7730000000001,
+          "total_device_us": 648.2049999999916
+        },
+        {
+          "name": "compact_wy_factor",
+          "calls": 32,
+          "self_cpu_us": 894.1229999999914,
+          "self_device_us": 6145.4479999999985,
+          "total_cpu_us": 6568.773000000001,
+          "total_device_us": 10003.981000000003
+        },
+        {
+          "name": "transformed_innovations",
+          "calls": 32,
+          "self_cpu_us": 287.10499999999956,
+          "self_device_us": 676.4860000000024,
+          "total_cpu_us": 1220.216999999997,
+          "total_device_us": 813.6780000000041
+        },
+        {
+          "name": "causal_query_product",
+          "calls": 32,
+          "self_cpu_us": 465.918999999992,
+          "self_device_us": 1342.136,
+          "total_cpu_us": 1741.7859999999991,
+          "total_device_us": 1652.524999999998
+        },
+        {
+          "name": "masked_read_accumulation",
+          "calls": 32,
+          "self_cpu_us": 310.0320000000038,
+          "self_device_us": 1059.023999999997,
+          "total_cpu_us": 1397.292000000002,
+          "total_device_us": 1320.5909999999974
+        },
+        {
+          "name": "final_state_update",
+          "calls": 32,
+          "self_cpu_us": 233.83800000000042,
+          "self_device_us": 244.3680000000004,
+          "total_cpu_us": 853.2569999999964,
+          "total_device_us": 327.6959999999988
+        }
+      ],
+      "profile_wall_seconds": 0.05403439700057788,
+      "profile_summary": {
+        "device_event_count_proxy": 4580,
+        "device_event_key_count_proxy": 73
+      },
+      "autograd_saved_tensor_bytes": 30474240
+    },
+    {
+      "status": "ok",
+      "backend": "fused_wy",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.013239616000646492,
+      "tokens_per_second": 1237498.1267734629,
+      "peak_vram_gib": 0.1138010025024414,
+      "profile": [
+        {
+          "name": "triton_fused_U_Z",
+          "calls": 32,
+          "self_cpu_us": 2811.266000000012,
+          "self_device_us": 56.50499999999926,
+          "total_cpu_us": 3036.585000000001,
+          "total_device_us": 56.50499999999926
+        },
+        {
+          "name": "compact_gram",
+          "calls": 32,
+          "self_cpu_us": 278.9269999999897,
+          "self_device_us": 493.633000000003,
+          "total_cpu_us": 1139.9489999999955,
+          "total_device_us": 736.687000000009
+        },
+        {
+          "name": "compact_wy_factor",
+          "calls": 32,
+          "self_cpu_us": 1063.0110000000036,
+          "self_device_us": 7600.178999999996,
+          "total_cpu_us": 8193.652000000004,
+          "total_device_us": 11238.391000000003
+        },
+        {
+          "name": "transformed_innovations",
+          "calls": 32,
+          "self_cpu_us": 330.5130000000072,
+          "self_device_us": 750.31899999999,
+          "total_cpu_us": 1432.0810000000051,
+          "total_device_us": 895.2739999999717
+        },
+        {
+          "name": "causal_query_product",
+          "calls": 32,
+          "self_cpu_us": 543.7519999999895,
+          "self_device_us": 1570.6110000000017,
+          "total_cpu_us": 2033.562999999997,
+          "total_device_us": 1871.8010000000077
+        },
+        {
+          "name": "masked_read_accumulation",
+          "calls": 32,
+          "self_cpu_us": 360.5809999999933,
+          "self_device_us": 1151.5650000000046,
+          "total_cpu_us": 1605.438000000002,
+          "total_device_us": 1394.4540000000084
+        },
+        {
+          "name": "final_state_update",
+          "calls": 32,
+          "self_cpu_us": 257.87299999999186,
+          "self_device_us": 308.6309999999921,
+          "total_cpu_us": 965.0159999999992,
+          "total_device_us": 396.96099999998023
+        }
+      ],
+      "profile_wall_seconds": 0.05820606300039799,
+      "profile_summary": {
+        "device_event_count_proxy": 4436,
+        "device_event_key_count_proxy": 71
+      },
+      "autograd_saved_tensor_bytes": 30474240
+    },
+    {
+      "status": "ok",
+      "backend": "rank2",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.01561459900040063,
+      "tokens_per_second": 1049274.4642100402,
+      "peak_vram_gib": 0.1170969009399414,
+      "profile": [
+        {
+          "name": "rank2_construct_UVZ",
+          "calls": 32,
+          "self_cpu_us": 714.3749999999802,
+          "self_device_us": 2394.3300000000036,
+          "total_cpu_us": 2991.055999999996,
+          "total_device_us": 3722.9380000000237
+        },
+        {
+          "name": "rank2_block_gram",
+          "calls": 32,
+          "self_cpu_us": 927.3549999999965,
+          "self_device_us": 2745.1499999999965,
+          "total_cpu_us": 3407.7030000000013,
+          "total_device_us": 3664.722000000012
+        },
+        {
+          "name": "rank2_nilpotent_inverse",
+          "calls": 32,
+          "self_cpu_us": 1024.1909999999782,
+          "self_device_us": 7406.566,
+          "total_cpu_us": 7835.128999999997,
+          "total_device_us": 10856.42100000001
+        },
+        {
+          "name": "rank2_innovations",
+          "calls": 32,
+          "self_cpu_us": 282.10000000000673,
+          "self_device_us": 668.9699999999964,
+          "total_cpu_us": 1217.2590000000018,
+          "total_device_us": 795.8039999999937
+        },
+        {
+          "name": "rank2_causal_read",
+          "calls": 32,
+          "self_cpu_us": 466.1379999999988,
+          "self_device_us": 1780.0150000000012,
+          "total_cpu_us": 2412.6060000000025,
+          "total_device_us": 2093.748000000005
+        },
+        {
+          "name": "rank2_final_state",
+          "calls": 32,
+          "self_cpu_us": 265.45699999999306,
+          "self_device_us": 300.0719999999951,
+          "total_cpu_us": 939.820999999994,
+          "total_device_us": 364.28199999999015
+        },
+        {
+          "name": "rank2_backward_read",
+          "calls": 32,
+          "self_cpu_us": 887.9529999999904,
+          "self_device_us": 5425.774000000005,
+          "total_cpu_us": 6297.663000000022,
+          "total_device_us": 6141.960999999945
+        },
+        {
+          "name": "rank2_backward_final_state",
+          "calls": 32,
+          "self_cpu_us": 429.3340000000062,
+          "self_device_us": 1547.7809999999954,
+          "total_cpu_us": 1994.5859999999993,
+          "total_device_us": 1815.54499999998
+        },
+        {
+          "name": "rank2_backward_factor",
+          "calls": 32,
+          "self_cpu_us": 1159.1200000001081,
+          "self_device_us": 7648.789000000004,
+          "total_cpu_us": 8450.139999999996,
+          "total_device_us": 9018.16899999999
+        },
+        {
+          "name": "rank2_backward_factor_map",
+          "calls": 32,
+          "self_cpu_us": 824.5220000001937,
+          "self_device_us": 1842.1430000000037,
+          "total_cpu_us": 2771.7490000000107,
+          "total_device_us": 2827.2870000000185
+        }
+      ],
+      "profile_wall_seconds": 0.07558442099980311,
+      "profile_summary": {
+        "device_event_count_proxy": 7428,
+        "device_event_key_count_proxy": 77
+      },
+      "autograd_saved_tensor_bytes": 34668544
+    }
+  ]
+}

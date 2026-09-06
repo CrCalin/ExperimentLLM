@@ -1,0 +1,17 @@
+{
+  "class": "MatrixMemoryBenchmark",
+  "args": {
+    "batch_sizes": [1, 8],
+    "sequence_lengths": [512, 2048, 4096, 8192, 16384],
+    "memory_dimensions": [16, 32, 64, 128, 256],
+    "chunk_sizes": [16, 32, 64, 128],
+    "warmup": 2,
+    "iterations": 5,
+    "dtype": "bfloat16",
+    "device": "cuda",
+    "backward": true,
+    "compile": false,
+    "profile": false,
+    "output": "benchmark_results/matrix_memory.json"
+  }
+}

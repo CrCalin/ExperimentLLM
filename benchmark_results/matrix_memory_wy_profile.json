@@ -1,0 +1,142 @@
+{
+  "config": {
+    "class": "MatrixMemoryBenchmark",
+    "args": {
+      "batch_sizes": [
+        8
+      ],
+      "sequence_lengths": [
+        2048
+      ],
+      "memory_dimensions": [
+        64
+      ],
+      "chunk_sizes": [
+        128
+      ],
+      "warmup": 1,
+      "iterations": 1,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "backward": true,
+      "compile": false,
+      "profile": true,
+      "output": "benchmark_results/matrix_memory_wy_profile.json"
+    }
+  },
+  "environment": {
+    "torch": "2.14.0+rocm7.14",
+    "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+    "gpu": "AMD Radeon RX 7900 XTX",
+    "rocm": "7.14.60850",
+    "triton": null
+  },
+  "results": [
+    {
+      "status": "ok",
+      "backend": "reference",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.5969440740000209,
+      "tokens_per_second": 27446.457237130435,
+      "peak_vram_gib": 0.3377695083618164,
+      "profile": [],
+      "profile_wall_seconds": 2.199187647999679,
+      "autograd_saved_tensor_bytes": 419495936
+    },
+    {
+      "status": "unsupported",
+      "backend": "chunked",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "error": "exact chunked matrix memory requires a BF16 triangular solve, but torch.linalg.solve_triangular is unavailable on cuda:0. The production BF16 chunk backend is therefore blocked; FP32 is available for diagnostic correctness/performance runs."
+    },
+    {
+      "status": "ok",
+      "backend": "wy",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.011914005000107863,
+      "tokens_per_second": 1375188.2763060506,
+      "peak_vram_gib": 0.1138010025024414,
+      "profile": [
+        {
+          "name": "construct_U_Z",
+          "calls": 32,
+          "self_cpu_us": 309.2490000000048,
+          "self_device_us": 583.5469999999979,
+          "total_cpu_us": 989.7600000000009,
+          "total_device_us": 867.9089999999928
+        },
+        {
+          "name": "compact_gram",
+          "calls": 32,
+          "self_cpu_us": 231.23100000000068,
+          "self_device_us": 419.6170000000005,
+          "total_cpu_us": 945.3939999999991,
+          "total_device_us": 651.0360000000028
+        },
+        {
+          "name": "compact_wy_factor",
+          "calls": 32,
+          "self_cpu_us": 869.2480000000028,
+          "self_device_us": 6582.736999999996,
+          "total_cpu_us": 6955.499999999998,
+          "total_device_us": 10425.530999999999
+        },
+        {
+          "name": "transformed_innovations",
+          "calls": 32,
+          "self_cpu_us": 298.5130000000029,
+          "self_device_us": 689.6869999999998,
+          "total_cpu_us": 1270.7920000000033,
+          "total_device_us": 825.9210000000006
+        },
+        {
+          "name": "causal_query_product",
+          "calls": 32,
+          "self_cpu_us": 476.40500000000884,
+          "self_device_us": 1409.6939999999963,
+          "total_cpu_us": 1842.8340000000044,
+          "total_device_us": 1729.4819999999952
+        },
+        {
+          "name": "masked_read_accumulation",
+          "calls": 32,
+          "self_cpu_us": 326.3379999999863,
+          "self_device_us": 1091.228000000001,
+          "total_cpu_us": 1483.1449999999945,
+          "total_device_us": 1389.311000000005
+        },
+        {
+          "name": "final_state_update",
+          "calls": 32,
+          "self_cpu_us": 234.48799999999687,
+          "self_device_us": 246.96900000000142,
+          "total_cpu_us": 874.8329999999994,
+          "total_device_us": 329.09700000000385
+        }
+      ],
+      "profile_wall_seconds": 0.05671490100030496,
+      "autograd_saved_tensor_bytes": 30474240
+    }
+  ]
+}

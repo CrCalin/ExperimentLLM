@@ -1,0 +1,242 @@
+{
+  "config": {
+    "class": "MatrixMemoryBenchmark",
+    "args": {
+      "batch_sizes": [
+        8
+      ],
+      "sequence_lengths": [
+        2048
+      ],
+      "memory_dimensions": [
+        64
+      ],
+      "chunk_sizes": [
+        128
+      ],
+      "warmup": 1,
+      "iterations": 2,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "backward": true,
+      "compile": false,
+      "profile": true,
+      "output": "benchmark_results/matrix_memory_rank2_profile_backward_instrumented.json"
+    }
+  },
+  "environment": {
+    "torch": "2.14.0+rocm7.14",
+    "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+    "gpu": "AMD Radeon RX 7900 XTX",
+    "rocm": "7.14.60850",
+    "triton": null
+  },
+  "results": [
+    {
+      "status": "ok",
+      "backend": "reference",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.5681155359998229,
+      "tokens_per_second": 28839.204284681113,
+      "peak_vram_gib": 0.3377695083618164,
+      "profile": [],
+      "profile_wall_seconds": 2.1448853649999364,
+      "autograd_saved_tensor_bytes": 419495936
+    },
+    {
+      "status": "unsupported",
+      "backend": "chunked",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "error": "exact chunked matrix memory requires a BF16 triangular solve, but torch.linalg.solve_triangular is unavailable on cuda:0. The production BF16 chunk backend is therefore blocked; FP32 is available for diagnostic correctness/performance runs."
+    },
+    {
+      "status": "ok",
+      "backend": "wy",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.011937187000512495,
+      "tokens_per_second": 1372517.6626031403,
+      "peak_vram_gib": 0.1138010025024414,
+      "profile": [
+        {
+          "name": "construct_U_Z",
+          "calls": 32,
+          "self_cpu_us": 307.76899999999966,
+          "self_device_us": 524.6339999999991,
+          "total_cpu_us": 951.0530000000009,
+          "total_device_us": 815.4319999999968
+        },
+        {
+          "name": "compact_gram",
+          "calls": 32,
+          "self_cpu_us": 223.77100000001246,
+          "self_device_us": 407.4329999999991,
+          "total_cpu_us": 891.9160000000011,
+          "total_device_us": 655.0070000000005
+        },
+        {
+          "name": "compact_wy_factor",
+          "calls": 32,
+          "self_cpu_us": 840.3550000000057,
+          "self_device_us": 6010.560999999997,
+          "total_cpu_us": 6408.881999999999,
+          "total_device_us": 9842.071999999987
+        },
+        {
+          "name": "transformed_innovations",
+          "calls": 32,
+          "self_cpu_us": 284.9960000000002,
+          "self_device_us": 673.4039999999987,
+          "total_cpu_us": 1226.3339999999985,
+          "total_device_us": 806.7559999999942
+        },
+        {
+          "name": "causal_query_product",
+          "calls": 32,
+          "self_cpu_us": 467.3899999999909,
+          "self_device_us": 1304.7739999999994,
+          "total_cpu_us": 1727.196000000001,
+          "total_device_us": 1631.3680000000008
+        },
+        {
+          "name": "masked_read_accumulation",
+          "calls": 32,
+          "self_cpu_us": 319.14299999999275,
+          "self_device_us": 1054.1080000000004,
+          "total_cpu_us": 1450.9119999999978,
+          "total_device_us": 1341.9559999999974
+        },
+        {
+          "name": "final_state_update",
+          "calls": 32,
+          "self_cpu_us": 230.79399999999578,
+          "self_device_us": 226.48800000000006,
+          "total_cpu_us": 823.1539999999989,
+          "total_device_us": 307.8169999999948
+        }
+      ],
+      "profile_wall_seconds": 0.051352428999962285,
+      "autograd_saved_tensor_bytes": 30474240
+    },
+    {
+      "status": "ok",
+      "backend": "rank2",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "dtype": "bfloat16",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.015215972000078182,
+      "tokens_per_second": 1076763.2853107129,
+      "peak_vram_gib": 0.1170969009399414,
+      "profile": [
+        {
+          "name": "rank2_construct_UVZ",
+          "calls": 32,
+          "self_cpu_us": 665.4560000000027,
+          "self_device_us": 2271.761999999998,
+          "total_cpu_us": 2771.5790000000015,
+          "total_device_us": 3601.6579999999885
+        },
+        {
+          "name": "rank2_block_gram",
+          "calls": 32,
+          "self_cpu_us": 888.7380000000105,
+          "self_device_us": 2617.059000000003,
+          "total_cpu_us": 3247.3770000000013,
+          "total_device_us": 3419.828
+        },
+        {
+          "name": "rank2_nilpotent_inverse",
+          "calls": 32,
+          "self_cpu_us": 943.6749999999925,
+          "self_device_us": 6671.161999999998,
+          "total_cpu_us": 7085.448000000004,
+          "total_device_us": 10183.234999999997
+        },
+        {
+          "name": "rank2_innovations",
+          "calls": 32,
+          "self_cpu_us": 254.04899999999566,
+          "self_device_us": 626.2979999999993,
+          "total_cpu_us": 1138.1920000000005,
+          "total_device_us": 750.8939999999977
+        },
+        {
+          "name": "rank2_causal_read",
+          "calls": 32,
+          "self_cpu_us": 433.5950000000055,
+          "self_device_us": 1684.5179999999991,
+          "total_cpu_us": 2271.153000000002,
+          "total_device_us": 1988.2499999999973
+        },
+        {
+          "name": "rank2_final_state",
+          "calls": 32,
+          "self_cpu_us": 239.90699999999924,
+          "self_device_us": 252.72199999999975,
+          "total_cpu_us": 863.9599999999966,
+          "total_device_us": 316.6909999999998
+        },
+        {
+          "name": "rank2_backward_read",
+          "calls": 32,
+          "self_cpu_us": 667.3750000000146,
+          "self_device_us": 4115.580999999995,
+          "total_cpu_us": 4870.152999999995,
+          "total_device_us": 4890.774999999958
+        },
+        {
+          "name": "rank2_backward_final_state",
+          "calls": 32,
+          "self_cpu_us": 366.71699999997145,
+          "self_device_us": 1288.3889999999956,
+          "total_cpu_us": 1636.4169999999904,
+          "total_device_us": 1582.4769999999917
+        },
+        {
+          "name": "rank2_backward_factor",
+          "calls": 32,
+          "self_cpu_us": 895.6950000000797,
+          "self_device_us": 5769.377000000004,
+          "total_cpu_us": 6494.820000000011,
+          "total_device_us": 7249.616999999947
+        },
+        {
+          "name": "rank2_backward_factor_map",
+          "calls": 32,
+          "self_cpu_us": 712.2430000000822,
+          "self_device_us": 1496.614999999987,
+          "total_cpu_us": 2311.701000000001,
+          "total_device_us": 2394.201999999921
+        }
+      ],
+      "profile_wall_seconds": 0.06414489099915954,
+      "autograd_saved_tensor_bytes": 34668544
+    }
+  ]
+}

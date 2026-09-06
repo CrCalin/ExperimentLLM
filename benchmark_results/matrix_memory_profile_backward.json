@@ -1,0 +1,118 @@
+{
+  "config": {
+    "class": "MatrixMemoryBenchmark",
+    "args": {
+      "batch_sizes": [
+        1
+      ],
+      "sequence_lengths": [
+        128
+      ],
+      "memory_dimensions": [
+        16
+      ],
+      "chunk_sizes": [
+        16
+      ],
+      "warmup": 1,
+      "iterations": 2,
+      "dtype": "float32",
+      "device": "cuda",
+      "backward": true,
+      "compile": false,
+      "profile": true,
+      "output": "benchmark_results/matrix_memory_profile_backward.json"
+    }
+  },
+  "environment": {
+    "torch": "2.14.0+rocm7.14",
+    "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43"
+  },
+  "results": [
+    {
+      "status": "ok",
+      "backend": "reference",
+      "batch": 1,
+      "sequence_length": 128,
+      "d_memory": 16,
+      "chunk_size": 16,
+      "dtype": "float32",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.02901433500028361,
+      "tokens_per_second": 4411.61239775955,
+      "peak_vram_gib": 0.06296634674072266,
+      "profile": [],
+      "profile_wall_seconds": 0.11839239400023871
+    },
+    {
+      "status": "ok",
+      "backend": "chunked",
+      "batch": 1,
+      "sequence_length": 128,
+      "d_memory": 16,
+      "chunk_size": 16,
+      "dtype": "float32",
+      "backward": true,
+      "compiled": false,
+      "compile_seconds": 0.0,
+      "graph_breaks": null,
+      "seconds": 0.004590893000113283,
+      "tokens_per_second": 27881.285840650507,
+      "peak_vram_gib": 0.0626678466796875,
+      "profile": [
+        {
+          "name": "construct_U_Z",
+          "calls": 16,
+          "self_cpu_us": 166.27399999999867,
+          "self_device_us": 268.4019999999992,
+          "total_cpu_us": 537.1619999999996,
+          "total_device_us": 371.4980000000006
+        },
+        {
+          "name": "gram",
+          "calls": 16,
+          "self_cpu_us": 197.47200000000134,
+          "self_device_us": 512.3119999999998,
+          "total_cpu_us": 910.7460000000009,
+          "total_device_us": 630.7519999999977
+        },
+        {
+          "name": "triangular_solve",
+          "calls": 16,
+          "self_cpu_us": 159.91400000000073,
+          "self_device_us": 697.9409999999991,
+          "total_cpu_us": 924.7150000000004,
+          "total_device_us": 1034.1319999999982
+        },
+        {
+          "name": "causal_query_product",
+          "calls": 16,
+          "self_cpu_us": 266.705000000003,
+          "self_device_us": 777.8919999999989,
+          "total_cpu_us": 1132.9880000000007,
+          "total_device_us": 951.123999999996
+        },
+        {
+          "name": "masked_read_accumulation",
+          "calls": 16,
+          "self_cpu_us": 170.07300000000066,
+          "self_device_us": 648.5420000000004,
+          "total_cpu_us": 876.418999999999,
+          "total_device_us": 765.6619999999992
+        },
+        {
+          "name": "final_state_update",
+          "calls": 16,
+          "self_cpu_us": 125.73999999999876,
+          "self_device_us": 135.51200000000154,
+          "total_cpu_us": 491.01099999999906,
+          "total_device_us": 180.816000000003
+        }
+      ],
+      "profile_wall_seconds": 0.01775583100015865
+    }
+  ]
+}

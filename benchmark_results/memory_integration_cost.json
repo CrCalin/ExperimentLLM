@@ -1,0 +1,1295 @@
+{
+  "config": {
+    "batch": 8,
+    "sequence_length": 2048,
+    "d_model": 256,
+    "chunk_size": 128,
+    "warmup": 2,
+    "iterations": 5,
+    "precision": "bf16 autocast over fp32 parameters",
+    "optimizer_step_included": false
+  },
+  "environment": {
+    "torch": "2.14.0+rocm7.14",
+    "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.43",
+    "gpu": "AMD Radeon RX 7900 XTX",
+    "rocm": "7.14.60850",
+    "triton": null
+  },
+  "baseline_model_parameters": 10161920,
+  "parameter_table": [
+    {
+      "d_memory": 32,
+      "per_layer": 65633,
+      "seven_layers": 459431,
+      "baseline_parameters": 10161920,
+      "increase_percent": 4.521104279506235
+    },
+    {
+      "d_memory": 64,
+      "per_layer": 131265,
+      "seven_layers": 918855,
+      "baseline_parameters": 10161920,
+      "increase_percent": 9.04213967439224
+    },
+    {
+      "d_memory": 128,
+      "per_layer": 262529,
+      "seven_layers": 1837703,
+      "baseline_parameters": 10161920,
+      "increase_percent": 18.08421046416425
+    },
+    {
+      "d_memory": 256,
+      "per_layer": 525057,
+      "seven_layers": 3675399,
+      "baseline_parameters": 10161920,
+      "increase_percent": 36.168352043708275
+    }
+  ],
+  "flops_canonical": {
+    "read_projection": 65536,
+    "write_projection": 163840,
+    "output_projection": 32768,
+    "recurrence": 2310144.0,
+    "branch_total": 2572288.0,
+    "baseline_transformer_estimate": 3801088
+  },
+  "cost_model": {
+    "baseline_eager_step_ms": 51.55099200055702,
+    "baseline_compiled_step_ms": 34.78159400037839,
+    "baseline_compiled_tokens_per_second": 471053.7418101585,
+    "historical_tokens_per_second": 466000,
+    "branch_forward_ms": 6.162435000078403,
+    "branch_forward_tokens_per_second": 2658689.3005429753,
+    "branch_training_ms": 12.772660000337055,
+    "branch_training_tokens_per_second": 1282739.852119108,
+    "branch_saved_tensor_bytes": 116948996,
+    "seven_layer_saved_tensor_bytes": 818642972,
+    "measured_transformer_block_training_ms": 6.20968799921684,
+    "branch_fraction_of_measured_transformer_block": 2.056892391686657,
+    "branch_fraction_of_equal_share_full_model": 2.5705728150753155,
+    "seven_layer_estimates": {
+      "optimistic": {
+        "branch_multiplier": 0.8,
+        "predicted_step_seconds": 0.1063084900022659,
+        "predicted_tokens_per_second": 154117.51215402255,
+        "slowdown_percent": 205.64582520602522
+      },
+      "base": {
+        "branch_multiplier": 1.0,
+        "predicted_step_seconds": 0.12419021400273778,
+        "predicted_tokens_per_second": 131926.65888826645,
+        "slowdown_percent": 257.05728150753157
+      },
+      "pessimistic": {
+        "branch_multiplier": 1.2,
+        "predicted_step_seconds": 0.14207193800320966,
+        "predicted_tokens_per_second": 115321.85898407226,
+        "slowdown_percent": 308.4687378090379
+      }
+    },
+    "target_limits": {
+      "30_percent_slowdown": {
+        "allowed_ms_per_branch": 1.4906397428733595,
+        "required_speedup_vs_measured": 8.568576050251052
+      },
+      "20_percent_slowdown": {
+        "allowed_ms_per_branch": 0.9937598285822398,
+        "required_speedup_vs_measured": 12.852864075376576
+      },
+      "10_percent_slowdown": {
+        "allowed_ms_per_branch": 0.4968799142911199,
+        "required_speedup_vs_measured": 25.705728150753153
+      }
+    },
+    "component_times": {
+      "fused_read_controls": {
+        "milliseconds": 0.7400940012303181,
+        "percent_of_component_sum": 5.144113505491424
+      },
+      "fused_write_controls": {
+        "milliseconds": 1.531158000943833,
+        "percent_of_component_sum": 10.642500194033138
+      },
+      "compact_wy_recurrence": {
+        "milliseconds": 11.55213200036087,
+        "percent_of_component_sum": 80.2945006195
+      },
+      "output_projection": {
+        "milliseconds": 0.5638179991365178,
+        "percent_of_component_sum": 3.9188856809754395
+      }
+    },
+    "isolated_stage_breakdown": {
+      "fused_read_gemm": {
+        "milliseconds": 0.3105100004177075,
+        "percent_of_isolated_stage_sum": 2.2220042065268513
+      },
+      "fused_read_normalization_and_gate": {
+        "milliseconds": 0.3567610001482535,
+        "percent_of_isolated_stage_sum": 2.5529755627443524
+      },
+      "fused_write_gemm": {
+        "milliseconds": 0.5029379990446614,
+        "percent_of_isolated_stage_sum": 3.599015645216255
+      },
+      "fused_write_normalization_and_gates": {
+        "milliseconds": 0.6881619992782362,
+        "percent_of_isolated_stage_sum": 4.924475395675432
+      },
+      "compact_wy_recurrence": {
+        "milliseconds": 11.55213200036087,
+        "percent_of_isolated_stage_sum": 82.66685731417583
+      },
+      "output_projection": {
+        "milliseconds": 0.5638179991365178,
+        "percent_of_isolated_stage_sum": 4.0346718756612745
+      }
+    },
+    "parameter_table": [
+      {
+        "d_memory": 32,
+        "per_layer": 65633,
+        "seven_layers": 459431,
+        "baseline_parameters": 10161920,
+        "increase_percent": 4.521104279506235
+      },
+      {
+        "d_memory": 64,
+        "per_layer": 131265,
+        "seven_layers": 918855,
+        "baseline_parameters": 10161920,
+        "increase_percent": 9.04213967439224
+      },
+      {
+        "d_memory": 128,
+        "per_layer": 262529,
+        "seven_layers": 1837703,
+        "baseline_parameters": 10161920,
+        "increase_percent": 18.08421046416425
+      },
+      {
+        "d_memory": 256,
+        "per_layer": 525057,
+        "seven_layers": 3675399,
+        "baseline_parameters": 10161920,
+        "increase_percent": 36.168352043708275
+      }
+    ]
+  },
+  "results": [
+    {
+      "seconds": 0.05155099200055702,
+      "milliseconds": 51.55099200055702,
+      "tokens_per_second": 317821.23610391375,
+      "peak_vram_gib": 3.4976420402526855,
+      "kind": "baseline_model",
+      "name": "full_model_forward_backward",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 10161920
+    },
+    {
+      "seconds": 0.0016522460009582574,
+      "milliseconds": 1.6522460009582574,
+      "tokens_per_second": 9916198.91378023,
+      "peak_vram_gib": 0.4399571418762207,
+      "kind": "baseline_component",
+      "name": "transformer_block",
+      "backward": false,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 852480
+    },
+    {
+      "seconds": 0.00620968799921684,
+      "milliseconds": 6.20968799921684,
+      "tokens_per_second": 2638457.8423370603,
+      "peak_vram_gib": 0.4875655174255371,
+      "kind": "baseline_component",
+      "name": "transformer_block",
+      "backward": true,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 852480
+    },
+    {
+      "seconds": 0.0011094689998571994,
+      "milliseconds": 1.1094689998571994,
+      "tokens_per_second": 14767424.77897877,
+      "peak_vram_gib": 0.2903599739074707,
+      "kind": "baseline_component",
+      "name": "attention_path_norm1_plus_attention",
+      "backward": false,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 852480
+    },
+    {
+      "seconds": 0.0039034290002746275,
+      "milliseconds": 3.9034290002746275,
+      "tokens_per_second": 4197335.214460746,
+      "peak_vram_gib": 0.3528609275817871,
+      "kind": "baseline_component",
+      "name": "attention_path_norm1_plus_attention",
+      "backward": true,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 852480
+    },
+    {
+      "seconds": 0.0005818730005557882,
+      "milliseconds": 0.5818730005557882,
+      "tokens_per_second": 28157347.023062557,
+      "peak_vram_gib": 0.3449244499206543,
+      "kind": "baseline_component",
+      "name": "mlp_path_norm2_plus_mlp",
+      "backward": false,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 852480
+    },
+    {
+      "seconds": 0.002295319000040763,
+      "milliseconds": 2.295319000040763,
+      "tokens_per_second": 7138005.653989285,
+      "peak_vram_gib": 0.4074254035949707,
+      "kind": "baseline_component",
+      "name": "mlp_path_norm2_plus_mlp",
+      "backward": true,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 852480
+    },
+    {
+      "seconds": 6.6992000938626e-05,
+      "milliseconds": 0.066992000938626,
+      "tokens_per_second": 244566511.97819906,
+      "peak_vram_gib": 0.2265772819519043,
+      "kind": "baseline_component",
+      "name": "norm_residual_shell",
+      "backward": false,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 852480
+    },
+    {
+      "seconds": 0.0002627260000735987,
+      "milliseconds": 0.2627260000735987,
+      "tokens_per_second": 62361547.7547341,
+      "peak_vram_gib": 0.2734532356262207,
+      "kind": "baseline_component",
+      "name": "norm_residual_shell",
+      "backward": true,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": false,
+      "parameters": 852480
+    },
+    {
+      "seconds": 0.03478159400037839,
+      "milliseconds": 34.78159400037839,
+      "tokens_per_second": 471053.7418101585,
+      "peak_vram_gib": 2.0334091186523438,
+      "kind": "baseline_model",
+      "name": "full_model_forward_backward",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "compiled": true,
+      "parameters": 10161920
+    },
+    {
+      "seconds": 0.005994416000248748,
+      "milliseconds": 5.994416000248748,
+      "tokens_per_second": 2733210.3743417407,
+      "peak_vram_gib": 0.2500324249267578,
+      "backward": false,
+      "parameters": 131265,
+      "saved_tensor_bytes": null,
+      "kind": "branch",
+      "projection": "separate",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.013601928998468793,
+      "milliseconds": 13.601928998468793,
+      "tokens_per_second": 1204535.033365076,
+      "peak_vram_gib": 0.2656583786010742,
+      "backward": true,
+      "parameters": 131265,
+      "saved_tensor_bytes": 158892036,
+      "kind": "branch",
+      "projection": "separate",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.006162435000078403,
+      "milliseconds": 6.162435000078403,
+      "tokens_per_second": 2658689.3005429753,
+      "peak_vram_gib": 0.2187824249267578,
+      "backward": false,
+      "parameters": 131265,
+      "saved_tensor_bytes": null,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.012772660000337055,
+      "milliseconds": 12.772660000337055,
+      "tokens_per_second": 1282739.852119108,
+      "peak_vram_gib": 0.2734708786010742,
+      "backward": true,
+      "parameters": 131265,
+      "saved_tensor_bytes": 116948996,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.006174188998556929,
+      "milliseconds": 6.174188998556929,
+      "tokens_per_second": 2653627.869802718,
+      "peak_vram_gib": 0.2089247703552246,
+      "backward": false,
+      "parameters": 114817,
+      "saved_tensor_bytes": null,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "no_q",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.01282310900023731,
+      "milliseconds": 12.82310900023731,
+      "tokens_per_second": 1277693.2645348948,
+      "peak_vram_gib": 0.263613224029541,
+      "backward": true,
+      "parameters": 114817,
+      "saved_tensor_bytes": 108527620,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "no_q",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.006187373999637202,
+      "milliseconds": 6.187373999637202,
+      "tokens_per_second": 2647973.114436056,
+      "peak_vram_gib": 0.2089247703552246,
+      "backward": false,
+      "parameters": 114817,
+      "saved_tensor_bytes": null,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "no_e",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.012833319000492338,
+      "milliseconds": 12.833319000492338,
+      "tokens_per_second": 1276676.7505250545,
+      "peak_vram_gib": 0.263613224029541,
+      "backward": true,
+      "parameters": 114817,
+      "saved_tensor_bytes": 108527620,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "no_e",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.0062409399997704895,
+      "milliseconds": 6.2409399997704895,
+      "tokens_per_second": 2625245.55605446,
+      "peak_vram_gib": 0.2089247703552246,
+      "backward": false,
+      "parameters": 114817,
+      "saved_tensor_bytes": null,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "no_k",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.012767119000272942,
+      "milliseconds": 12.767119000272942,
+      "tokens_per_second": 1283296.5682899747,
+      "peak_vram_gib": 0.263613224029541,
+      "backward": true,
+      "parameters": 114817,
+      "saved_tensor_bytes": 108527620,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "no_k",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.00613834800060431,
+      "milliseconds": 6.13834800060431,
+      "tokens_per_second": 2669122.0501651294,
+      "peak_vram_gib": 0.1892094612121582,
+      "backward": false,
+      "parameters": 81921,
+      "saved_tensor_bytes": null,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "none",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.012397513000905747,
+      "milliseconds": 12.397513000905747,
+      "tokens_per_second": 1321555.3795993605,
+      "peak_vram_gib": 0.2438979148864746,
+      "backward": true,
+      "parameters": 81921,
+      "saved_tensor_bytes": 91684868,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "none",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.006228633999853628,
+      "milliseconds": 6.228633999853628,
+      "tokens_per_second": 2630432.2906732075,
+      "peak_vram_gib": 0.2088336944580078,
+      "backward": false,
+      "parameters": 114881,
+      "saved_tensor_bytes": null,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "slice",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.013094051000734908,
+      "milliseconds": 13.094051000734908,
+      "tokens_per_second": 1251255.2455371101,
+      "peak_vram_gib": 0.2714262008666992,
+      "backward": true,
+      "parameters": 114881,
+      "saved_tensor_bytes": 116916228,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "slice",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.00019602499924076255,
+      "milliseconds": 0.19602499924076255,
+      "tokens_per_second": 83581176.1941485,
+      "peak_vram_gib": 0.1531085968017578,
+      "backward": false,
+      "parameters": 32832,
+      "saved_tensor_bytes": null,
+      "kind": "component",
+      "name": "fused_read_controls",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        64
+      ]
+    },
+    {
+      "seconds": 0.0007400940012303181,
+      "milliseconds": 0.7400940012303181,
+      "tokens_per_second": 22137728.41390898,
+      "peak_vram_gib": 0.17264080047607422,
+      "backward": true,
+      "parameters": 32832,
+      "saved_tensor_bytes": 27426816,
+      "kind": "component",
+      "name": "fused_read_controls",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        64
+      ]
+    },
+    {
+      "seconds": 0.00036103900129091926,
+      "milliseconds": 0.36103900129091926,
+      "tokens_per_second": 45380138.82549504,
+      "peak_vram_gib": 0.1728229522705078,
+      "backward": false,
+      "parameters": 82048,
+      "saved_tensor_bytes": null,
+      "kind": "component",
+      "name": "fused_write_controls",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        192
+      ]
+    },
+    {
+      "seconds": 0.001531158000943833,
+      "milliseconds": 1.531158000943833,
+      "tokens_per_second": 10700397.992826743,
+      "peak_vram_gib": 0.23337078094482422,
+      "backward": true,
+      "parameters": 82048,
+      "saved_tensor_bytes": 50692096,
+      "kind": "component",
+      "name": "fused_write_controls",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        192
+      ]
+    },
+    {
+      "seconds": 0.00016171800052688923,
+      "milliseconds": 0.16171800052688923,
+      "tokens_per_second": 101312160.34467229,
+      "peak_vram_gib": 0.1295490264892578,
+      "backward": false,
+      "parameters": 16385,
+      "saved_tensor_bytes": null,
+      "kind": "component",
+      "name": "output_projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        256
+      ]
+    },
+    {
+      "seconds": 0.0005638179991365178,
+      "milliseconds": 0.5638179991365178,
+      "tokens_per_second": 29059022.636900473,
+      "peak_vram_gib": 0.20767498016357422,
+      "backward": true,
+      "parameters": 16385,
+      "saved_tensor_bytes": 27295748,
+      "kind": "component",
+      "name": "output_projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        256
+      ]
+    },
+    {
+      "seconds": 6.791400119254831e-05,
+      "milliseconds": 0.06791400119254831,
+      "tokens_per_second": 241246277.82640043,
+      "peak_vram_gib": 0.1549701690673828,
+      "backward": false,
+      "parameters": 0,
+      "saved_tensor_bytes": null,
+      "kind": "component",
+      "name": "fused_read_gemm",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        128
+      ]
+    },
+    {
+      "seconds": 0.0003105100004177075,
+      "milliseconds": 0.3105100004177075,
+      "tokens_per_second": 52764806.21545118,
+      "peak_vram_gib": 0.19415569305419922,
+      "backward": true,
+      "parameters": 0,
+      "saved_tensor_bytes": 16842752,
+      "kind": "component",
+      "name": "fused_read_gemm",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        128
+      ]
+    },
+    {
+      "seconds": 9.991600018111058e-05,
+      "milliseconds": 0.09991600018111058,
+      "tokens_per_second": 163977741.00546357,
+      "peak_vram_gib": 0.1453571319580078,
+      "backward": false,
+      "parameters": 0,
+      "saved_tensor_bytes": null,
+      "kind": "component",
+      "name": "fused_read_normalization_and_gate",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        64
+      ]
+    },
+    {
+      "seconds": 0.0003567610001482535,
+      "milliseconds": 0.3567610001482535,
+      "tokens_per_second": 45924302.24489661,
+      "peak_vram_gib": 0.16488981246948242,
+      "backward": true,
+      "parameters": 0,
+      "saved_tensor_bytes": 18972672,
+      "kind": "component",
+      "name": "fused_read_normalization_and_gate",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        64
+      ]
+    },
+    {
+      "seconds": 9.79329997790046e-05,
+      "milliseconds": 0.0979329997790046,
+      "tokens_per_second": 167298051.08566162,
+      "peak_vram_gib": 0.16104364395141602,
+      "backward": false,
+      "parameters": 0,
+      "saved_tensor_bytes": null,
+      "kind": "component",
+      "name": "fused_write_gemm",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        320
+      ]
+    },
+    {
+      "seconds": 0.0005029379990446614,
+      "milliseconds": 0.5029379990446614,
+      "tokens_per_second": 32576580.077706724,
+      "peak_vram_gib": 0.2590060234069824,
+      "backward": true,
+      "parameters": 0,
+      "saved_tensor_bytes": 29523968,
+      "kind": "component",
+      "name": "fused_write_gemm",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        320
+      ]
+    },
+    {
+      "seconds": 0.00019986300139862578,
+      "milliseconds": 0.19986300139862578,
+      "tokens_per_second": 81976153.09159794,
+      "peak_vram_gib": 0.17114496231079102,
+      "backward": false,
+      "parameters": 0,
+      "saved_tensor_bytes": null,
+      "kind": "component",
+      "name": "fused_write_normalization_and_gates",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        192
+      ]
+    },
+    {
+      "seconds": 0.0006881619992782362,
+      "milliseconds": 0.6881619992782362,
+      "tokens_per_second": 23808347.478041515,
+      "peak_vram_gib": 0.22583436965942383,
+      "backward": true,
+      "parameters": 0,
+      "saved_tensor_bytes": 42139648,
+      "kind": "component",
+      "name": "fused_write_normalization_and_gates",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "output_shape": [
+        8,
+        2048,
+        192
+      ]
+    },
+    {
+      "seconds": 0.0056691459994908655,
+      "milliseconds": 5.6691459994908655,
+      "tokens_per_second": 2890029.6449361886,
+      "peak_vram_gib": 0.16699552536010742,
+      "kind": "component",
+      "name": "compact_wy_recurrence",
+      "backward": false,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "parameters": 0,
+      "output_shape": [
+        8,
+        2048,
+        64
+      ]
+    },
+    {
+      "seconds": 0.01155213200036087,
+      "milliseconds": 11.55213200036087,
+      "tokens_per_second": 1418266.342480175,
+      "peak_vram_gib": 0.18231630325317383,
+      "kind": "component",
+      "name": "compact_wy_recurrence",
+      "backward": true,
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "parameters": 0,
+      "output_shape": [
+        8,
+        2048,
+        64
+      ]
+    },
+    {
+      "kind": "profile",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "backward": true,
+      "wall_seconds": 0.04888206900068326,
+      "events": [
+        {
+          "name": "memory_branch/full",
+          "calls": 1,
+          "self_cpu_us": 57.6820000000007,
+          "total_cpu_us": 32686.636,
+          "self_device_us": 0.0,
+          "total_device_us": 9055.312999999996
+        },
+        {
+          "name": "memory_branch/read_control_projection",
+          "calls": 1,
+          "self_cpu_us": 110.21499999999992,
+          "total_cpu_us": 633.564,
+          "self_device_us": 0.0,
+          "total_device_us": 169.75099999999992
+        },
+        {
+          "name": "memory_branch/read_control_projection",
+          "calls": 1,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 312.63599999999997,
+          "total_device_us": 312.63599999999997
+        },
+        {
+          "name": "memory_branch/write_control_projection",
+          "calls": 1,
+          "self_cpu_us": 80.64899999999989,
+          "total_cpu_us": 347.12200000000007,
+          "self_device_us": 0.0,
+          "total_device_us": 333.30600000000027
+        },
+        {
+          "name": "memory_branch/write_control_projection",
+          "calls": 1,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 448.211,
+          "total_device_us": 448.211
+        },
+        {
+          "name": "memory_branch/recurrence",
+          "calls": 1,
+          "self_cpu_us": 220.71899999999732,
+          "total_cpu_us": 16575.369,
+          "self_device_us": 0.0,
+          "total_device_us": 8311.25899999999
+        },
+        {
+          "name": "matrix_memory/construct_U_Z",
+          "calls": 16,
+          "self_cpu_us": 281.7140000000036,
+          "total_cpu_us": 915.3880000000004,
+          "self_device_us": 0.0,
+          "total_device_us": 442.6019999999962
+        },
+        {
+          "name": "matrix_memory/compact_gram",
+          "calls": 16,
+          "self_cpu_us": 224.45000000000095,
+          "total_cpu_us": 964.3030000000006,
+          "self_device_us": 0.0,
+          "total_device_us": 416.976000000004
+        },
+        {
+          "name": "matrix_memory/construct_U_Z",
+          "calls": 16,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 589.9979999999953,
+          "total_device_us": 589.9979999999953
+        },
+        {
+          "name": "matrix_memory/compact_gram",
+          "calls": 16,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 505.59300000000144,
+          "total_device_us": 505.59300000000144
+        },
+        {
+          "name": "matrix_memory/compact_wy_factor",
+          "calls": 16,
+          "self_cpu_us": 927.0469999999934,
+          "total_cpu_us": 8001.755,
+          "self_device_us": 0.0,
+          "total_device_us": 5856.218999999987
+        },
+        {
+          "name": "matrix_memory/compact_wy_factor",
+          "calls": 16,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 8634.023000000001,
+          "total_device_us": 8634.023000000001
+        },
+        {
+          "name": "matrix_memory/transformed_innovations",
+          "calls": 16,
+          "self_cpu_us": 296.15400000000045,
+          "total_cpu_us": 1295.233999999999,
+          "self_device_us": 0.0,
+          "total_device_us": 263.6769999999997
+        },
+        {
+          "name": "matrix_memory/transformed_innovations",
+          "calls": 16,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 462.18300000000136,
+          "total_device_us": 462.18300000000136
+        },
+        {
+          "name": "matrix_memory/causal_query_product",
+          "calls": 16,
+          "self_cpu_us": 481.69399999999814,
+          "total_cpu_us": 1832.0190000000025,
+          "self_device_us": 0.0,
+          "total_device_us": 585.5969999999952
+        },
+        {
+          "name": "matrix_memory/causal_query_product",
+          "calls": 16,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 1347.4880000000016,
+          "total_device_us": 1347.4880000000016
+        },
+        {
+          "name": "matrix_memory/masked_read_accumulation",
+          "calls": 16,
+          "self_cpu_us": 319.30800000000227,
+          "total_cpu_us": 1508.083999999999,
+          "self_device_us": 0.0,
+          "total_device_us": 496.3370000000027
+        },
+        {
+          "name": "matrix_memory/masked_read_accumulation",
+          "calls": 16,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 1181.1350000000007,
+          "total_device_us": 1181.1350000000007
+        },
+        {
+          "name": "matrix_memory/final_state_update",
+          "calls": 16,
+          "self_cpu_us": 234.13599999999587,
+          "total_cpu_us": 878.0740000000005,
+          "self_device_us": 0.0,
+          "total_device_us": 235.6120000000019
+        },
+        {
+          "name": "matrix_memory/final_state_update",
+          "calls": 16,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 299.8690000000024,
+          "total_device_us": 299.8690000000024
+        },
+        {
+          "name": "memory_branch/recurrence",
+          "calls": 1,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 14.239000000001397,
+          "total_device_us": 14.239000000001397
+        },
+        {
+          "name": "memory_branch/output_projection",
+          "calls": 1,
+          "self_cpu_us": 29.10699999999997,
+          "total_cpu_us": 105.0570000000007,
+          "self_device_us": 0.0,
+          "total_device_us": 138.56100000000515
+        },
+        {
+          "name": "memory_branch/output_projection",
+          "calls": 1,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 179.6740000000027,
+          "total_device_us": 179.6740000000027
+        },
+        {
+          "name": "memory_branch/residual_scalar_and_add",
+          "calls": 1,
+          "self_cpu_us": 10.661000000000058,
+          "total_cpu_us": 23.787000000000262,
+          "self_device_us": 0.0,
+          "total_device_us": 51.36000000000058
+        },
+        {
+          "name": "memory_branch/backward",
+          "calls": 1,
+          "self_cpu_us": 14885.310999999994,
+          "total_cpu_us": 14944.054999999997,
+          "self_device_us": 0.0,
+          "total_device_us": 51.076000000002296
+        },
+        {
+          "name": "memory_branch/residual_scalar_and_add",
+          "calls": 1,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 51.36000000000058,
+          "total_device_us": 51.36000000000058
+        },
+        {
+          "name": "memory_branch/backward",
+          "calls": 1,
+          "self_cpu_us": 0,
+          "total_cpu_us": 0,
+          "self_device_us": 59.64099999999962,
+          "total_device_us": 59.64099999999962
+        }
+      ]
+    },
+    {
+      "seconds": 0.004260157000317122,
+      "milliseconds": 4.260157000317122,
+      "tokens_per_second": 3845867.652009161,
+      "peak_vram_gib": 0.1872272491455078,
+      "kind": "compiled_branch",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128,
+      "compiled": true,
+      "compile_seconds": 8.271125786000994,
+      "graph_breaks": 0,
+      "backward": false
+    },
+    {
+      "seconds": 0.012856630999522167,
+      "milliseconds": 12.856630999522167,
+      "tokens_per_second": 1274361.8449194764,
+      "peak_vram_gib": 0.24209880828857422,
+      "backward": true,
+      "parameters": 65633,
+      "saved_tensor_bytes": 87719940,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 32,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.01304674499988323,
+      "milliseconds": 13.04674499988323,
+      "tokens_per_second": 1255792.1535330566,
+      "peak_vram_gib": 0.2734708786010742,
+      "backward": true,
+      "parameters": 131265,
+      "saved_tensor_bytes": 116948996,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.013271486001031008,
+      "milliseconds": 13.271486001031008,
+      "tokens_per_second": 1234526.4123947532,
+      "peak_vram_gib": 0.3376798629760742,
+      "backward": true,
+      "parameters": 262529,
+      "saved_tensor_bytes": 176979972,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 128,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.015902133000054164,
+      "milliseconds": 15.902133000054164,
+      "tokens_per_second": 1030302.0355787614,
+      "peak_vram_gib": 0.47195863723754883,
+      "backward": true,
+      "parameters": 525057,
+      "saved_tensor_bytes": 303333380,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 256,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.005294086999128922,
+      "milliseconds": 5.294086999128922,
+      "tokens_per_second": 773693.3678411306,
+      "peak_vram_gib": 0.11579418182373047,
+      "backward": true,
+      "parameters": 131265,
+      "saved_tensor_bytes": 29433860,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 512,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.012873925001258613,
+      "milliseconds": 12.873925001258613,
+      "tokens_per_second": 1272649.949288832,
+      "peak_vram_gib": 0.2734708786010742,
+      "backward": true,
+      "parameters": 131265,
+      "saved_tensor_bytes": 116948996,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 2048,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.025433352999243652,
+      "milliseconds": 25.433352999243652,
+      "tokens_per_second": 1288386.946108697,
+      "peak_vram_gib": 0.4837064743041992,
+      "backward": true,
+      "parameters": 131265,
+      "saved_tensor_bytes": 233635844,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 4096,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    },
+    {
+      "seconds": 0.049748830000680755,
+      "milliseconds": 49.748830000680755,
+      "tokens_per_second": 1317337.5132461048,
+      "peak_vram_gib": 0.9041776657104492,
+      "backward": true,
+      "parameters": 131265,
+      "saved_tensor_bytes": 467009540,
+      "kind": "branch",
+      "projection": "fused",
+      "gate_mode": "full",
+      "q_source": "projection",
+      "batch": 8,
+      "sequence_length": 8192,
+      "d_model": 256,
+      "d_memory": 64,
+      "chunk_size": 128
+    }
+  ]
+}
