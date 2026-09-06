@@ -6,7 +6,7 @@ from dataclasses import replace
 from .config import ComponentSpec, ExperimentConfig, LayerSpec
 from .registry import (
     ATTENTIONS, BLOCKS, EMBEDDINGS, HEADS, INITIALIZATIONS, MLPS, MODELS,
-    MEMORIES, NORMS, OPTIMIZERS, POSITIONS, RESIDUALS, ROUTINGS, SCHEDULES,
+    NORMS, OPTIMIZERS, POSITIONS, RESIDUALS, ROUTINGS, SCHEDULES,
 )
 
 
@@ -16,7 +16,7 @@ def _component(spec: ComponentSpec, registry, injected: set[str] | None = None) 
 
 def _layer(layer: LayerSpec) -> LayerSpec:
     args = BLOCKS.resolve_args(layer.class_name, layer.args, {"d_model"})
-    if layer.class_name in {"TransformerBlock", "MatrixMemoryTransformerBlock"}:
+    if layer.class_name == "TransformerBlock":
         mappings = {
             "norm": (NORMS, {"dim"}), "attention": (ATTENTIONS, {"d_model"}),
             "residual": (RESIDUALS, set()),
@@ -30,9 +30,6 @@ def _layer(layer: LayerSpec) -> LayerSpec:
         if args["mlp"] is not None:
             spec = ComponentSpec.from_dict(args["mlp"], f"{layer.class_name}.args.mlp")
             args["mlp"] = _component(spec, MLPS, {"d_model"}).to_dict()
-        if layer.class_name == "MatrixMemoryTransformerBlock":
-            spec = ComponentSpec.from_dict(args["memory"], f"{layer.class_name}.args.memory")
-            args["memory"] = _component(spec, MEMORIES, {"d_model"}).to_dict()
     elif layer.class_name == "FFNOnlyBlock":
         norm_spec = ComponentSpec.from_dict(args["norm"], "FFNOnlyBlock.args.norm")
         mlp_spec = ComponentSpec.from_dict(args["mlp"], "FFNOnlyBlock.args.mlp")

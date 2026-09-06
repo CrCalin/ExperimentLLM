@@ -3,7 +3,7 @@ from transformers import PretrainedConfig, PreTrainedModel
 from transformers.modeling_outputs import CausalLMOutput
 import torch
 from experimentlm.config import ModelConfig
-from experimentlm.architectures.causal_lm import build_model
+from experimentlm.model import build_model
 
 class ExperimentLMConfig(PretrainedConfig):
     model_type='experimentlm'
