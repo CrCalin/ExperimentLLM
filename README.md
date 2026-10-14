@@ -1,3 +1,5 @@
+**DISCLAIMER:** While the ideas are mine, the code is mostly vibecoded. I did work to make it as optimized as i could, but there might still be a fair bit of sloppy code, especially in the not-so-vital-for-performance parts of the code.
+
 # ExperimentLM
 
 JSON-configured decoder-only LM research framework. Architectures are explicit registered component stacks; training, optimization, data, evaluation, checkpointing, and generation are separate modules. `configs/standard_transformer_plus.json` is the canonical control model (7 layers, width 256, 4 heads × 64, SwiGLU 768, RoPE, RMSNorm, sequential `StandardResidual`, untied embeddings, no dropout); `configs/gated_residual_transformer.json` is the same stack with learned per-branch residual gates (`GatedResidual`).
