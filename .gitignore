@@ -1,10 +1,143 @@
-.venv**/
-smollm_500m.jsonl
-tokenizer.json
-*.bin
+# ExperimentLM ignore rules.
+#
+# Tracked by design: all *.py sources (root scripts, experimentlm/, tests/),
+# configs/*.json, docs/, requirements.txt, README.md, AGENTS.md,
+# "Concise recap roughly.txt", and the root benchmark_results.json summary.
+# Everything below is generated, downloaded, compiled, or too large for a remote.
+
+# --- Virtual environments and local secrets ---------------------------------
+.venv*/
+venv/
+env/
+.python
+.env
+.env.*
+!.env.example
+.pypirc
+netrc
+pip-selfcheck.json
+
+# --- Python bytecode and packaging -----------------------------------------
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+build/
+dist/
+sdist/
+wheels/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+.installed.cfg
+MANIFEST
+
+# --- Test, lint, coverage, and type-check caches -----------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.hypothesis/
+.tox/
+.nox/
+.benchmarks/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+profile_default/
+
+# --- Editors and notebooks ---------------------------------------------------
+.ipynb_checkpoints/
+.vscode/
+.idea/
+*.sublime-*
+Session.vim
+*.swp
+*.swo
+*~
+.history/
+
+# --- OS clutter (this tree is edited on both Windows and Ubuntu) -------------
+.DS_Store
+._*
+.Spotlight-V100
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# --- Generated corpus and tokenizer artifacts --------------------------------
+# download_dataset.py -> smollm_500m.jsonl
+# train_tokenizer.py  -> tokenizer.json
+# tokenize_dataset.py -> train.bin, eval.bin
+smollm_500m.jsonl
+tokenizer.json
+tokenizer.model
+tokenizer_config.json
+special_tokens_map.json
+generation_config.json
+vocab.json
+vocab.txt
+merges.txt
+*.jsonl
+*.jsonl.gz
+*.jsonl.zst
+*.parquet
+*.arrow
+*.npy
+*.npz
+
+# --- Model weights and training-state binaries -------------------------------
+# checkpoints/ and benchmarks/ are ignored wholesale below; these patterns also
+# catch weights written by ad-hoc torch.save / export calls outside those dirs.
+*.bin
+*.pt
+*.pth
+*.pt2
+*.ckpt
+*.safetensors
+*.gguf
+*.onnx
+*.joblib
+*.h5
+
+# --- Run outputs and experiment artifacts ------------------------------------
+# trainer.train       -> checkpoints/<config>/ and logs/<config>/ (incl. results.json)
+# export_hf.py        -> benchmarks/<config>/ (HF export incl. pytorch_model.bin)
+# benchmark.py        -> benchmarks/<config>/benchmark_results.json (use -f to publish)
+# run_lr_sweep.py     -> sweeps/lr/
 checkpoints/
 logs/
 sweeps/
 benchmarks/
+outputs/
+runs/
+wandb/
+*.log
+nohup.out
+# stray smoke-run result dumps at the repo root (benchmark.py --output benchmark_results.json)
+/benchmark_results.json
+
+# --- Compile, kernel, and dataset caches -------------------------------------
+# torch.compile / Triton / ROCm kernel caches, plus HF and lm-eval caches when
+# redirected into the working tree (HF also writes .cache/huggingface/ in-place).
+.cache/
+.hf/
+hf_cache/
+datasets_cache/
+model_cache/
+.huggingface/
+triton_cache/
+.triton/
+.triton_cache/
+torch_compile_debug/
+torch_extensions/
+.nv/
+*.hsaco
+tmp/
+temp/
+*.tmp
+*.incomplete
+*.part
