@@ -8,6 +8,34 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the configuration lifecyc
 
 Find small-language-model architectures and training methods that improve **final validation quality per unit of wall-clock**, ideally beating a standard full-MHA Transformer at the same or higher training speed. Parameter count is secondary; throughput and final quality are the main constraints.
 
+## JSON-configured architecture
+
+One experiment is one JSON file, and [`configs/standard_transformer_plus.json`](configs/standard_transformer_plus.json) is the canonical example and schema reference. It has four sections: `model` (architecture and initialization), `training` (optimizer, schedule, precision, batching, stopping, and logging/checkpoint intervals), `data` (the two token streams), and `evaluation` (validation batch count, where `0` evaluates the complete stream). The filename without `.json` becomes the experiment name and the directory used beneath both `checkpoints/` and `logs/`.
+
+Every selectable piece is written as a registered class plus its arguments, and `class` values must be exact names from the thirteen explicit registries — models, embeddings, position encodings, blocks, norms, attention, MLPs, residuals, value routings, output heads, initializations, optimizers, schedules:
+
+```json
+{"class": "GatedDeltaNet2LinearAttention", "args": {"n_heads": 4, "head_dim": 64, "expand_v": 1.0, "conv_size": 4}}
+```
+
+Nothing is imported dynamically from configuration, so a typo fails at load listing the registered alternatives. Model dimensions are injected by the framework rather than repeated inside every component: the embedding receives `vocab_size` and `d_model`, the position encoding `context_length`, each block `d_model`, nested norms `dim`, nested attention and MLP `d_model`, and the output head `d_model` and `vocab_size`. Everything else comes from `args`, and `model.context_length` is authoritative.
+
+Layer entries accept a `repeat` count as input shorthand. `TransformerBlock` composes a norm, attention, MLP, and residual strategy — with `"mlp": null` allowed for an attention-only stage — while `FFNOnlyBlock` is an MLP stage with no mixing at all:
+
+```json
+{"class": "TransformerBlock", "repeat": 7, "args": {
+  "pre_norm": true,
+  "norm": {"class": "RMSNorm", "args": {"eps": 1e-6}},
+  "attention": {"class": "MultiHeadCausalSelfAttention", "args": {"n_heads": 4, "head_dim": 64}},
+  "mlp": {"class": "SwiGLU", "args": {"d_ff": 768}},
+  "residual": {"class": "StandardResidual", "args": {}}
+}}
+```
+
+Loading a config resolves it before anything runs: `repeat` becomes one explicit entry per layer, registered constructor defaults are materialized, and unknown or missing arguments are rejected against the registered signature. A heterogeneous stack is therefore just an ordered list of entries — that is how `new_baseline` interleaves three attention blocks with four `FFNOnlyBlock` stages, and how the SWA/GDN2/global-GQA design in the results tables below is expressed. Resolution runs again inside `trainer.train`, so programmatically built configs get the same guarantees, and every checkpoint stores the fully resolved config beside `checkpoint.pt`.
+
+There is one construction path (`build_model`) and one training loop (`trainer.train`); a new architecture normally means a class, a registry entry, and a config change — not a trainer change. `docs/ARCHITECTURE.md` carries the full injection table, component contracts, and the extension checklist.
+
 ## Environment
 
 Ubuntu 24.04, Ryzen 9 7950X3D, 64 GB RAM, Radeon RX 7900 XTX (24 GB). Python 3.12.3 with PyTorch 2.13.0+rocm7.2 (HIP 7.2) and `fla-core[rocm]==0.5.2`.
