@@ -56,7 +56,7 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
         ))
         effective_tokens = training.micro_batch_size * accumulation * model_config.context_length
         train_data = TokenStream(
-            config.data.train_bin, model_config.context_length, training.micro_batch_size, training.seed
+            config.data.train_bin, model_config.context_length, training.micro_batch_size, training.seed, model_config.num_mtp_heads
         )
         micro_batches = len(train_data) // training.micro_batch_size
         steps_per_epoch = micro_batches // accumulation
@@ -131,22 +131,52 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
                 train_iter = iter(train_data)
             optimizer.zero_grad(set_to_none=not stable_cudagraph_grads)
             loss_sum, started = 0.0, time.perf_counter()
+            horizon_loss_sum = [0.0] * model_config.num_mtp_heads
+            mtp_positions_used_sum = 0
+            mtp_positions_total_sum = 0
+            mtp_active = (
+                model_config.num_mtp_heads == 2
+                and model_config.mtp_head_type == "full_width"
+                and step < model_config.mtp_active_steps
+            )
             for _ in range(accumulation):
                 inputs, labels = next(train_iter)
                 if training.compile and hasattr(torch.compiler, "cudagraph_mark_step_begin"):
                     torch.compiler.cudagraph_mark_step_begin()
                 with torch.autocast(device_type=device.type, dtype=torch.bfloat16,
                                     enabled=training.precision == "bf16"):
-                    _, loss = model(inputs.to(device), labels.to(device))
+                    step_labels = labels.to(device) if mtp_active else labels[0].to(device)
+                    _, loss = model(
+                        inputs.to(device), step_labels,
+                        mtp_active=mtp_active, mtp_parity=step % 2,
+                    )
                     (loss / accumulation).backward()
                 loss_sum += float(loss.detach())
+                for index, value in enumerate(getattr(model, "last_horizon_losses", ())):
+                    horizon_loss_sum[index] += float(value)
+                if getattr(model, "last_mtp_positions_total", None) is not None:
+                    mtp_positions_used_sum += model.last_mtp_positions_used
+                    mtp_positions_total_sum += model.last_mtp_positions_total
             grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), training.grad_clip)
             optimizer.step(); scheduler.step(); tokens_seen += effective_tokens
-            if (step + 1) % training.log_interval_steps == 0 or step == start:
+            if ((step + 1) % training.log_interval_steps == 0
+                    or step == start or step == model_config.mtp_active_steps):
                 throughput = effective_tokens / max(time.perf_counter() - started, 1e-9)
                 peak_vram = torch.cuda.max_memory_allocated() / 2**30 if device.type == "cuda" else 0.0
+                horizon_text = ""
+                if mtp_active:
+                    horizon_losses = [value / accumulation for value in horizon_loss_sum]
+                    mtp_aux_loss = sum(horizon_losses[1:]) / (len(horizon_losses) - 1)
+                    horizon_text = " ".join(
+                        f"horizon_{i+1}_loss={value:.4f}" for i, value in enumerate(horizon_losses)
+                    ) + f" mtp_aux_loss={mtp_aux_loss:.4f}"
+                    if mtp_positions_total_sum:
+                        positions_fraction = mtp_positions_used_sum / mtp_positions_total_sum
+                        horizon_text += f" mtp_h2_positions={mtp_positions_used_sum}/{mtp_positions_total_sum} mtp_h2_fraction={positions_fraction:.4f}"
+                elif step == model_config.mtp_active_steps:
+                    horizon_text = f"mtp_disabled step={step}"
                 print(
-                    f"step={step+1}/{total_steps} loss={loss_sum/accumulation:.4f} "
+                    f"step={step+1}/{total_steps} {horizon_text} loss={loss_sum/accumulation:.4f} "
                     f"lr={optimizer.param_groups[0]['lr']:.3g} tokens_seen={tokens_seen:,} "
                     f"tok/s={throughput:,.0f} peak_vram={peak_vram:.2f}GiB grad_norm={float(grad_norm):.2f}", flush=True,
                 )
@@ -156,7 +186,7 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
                 limit = config.evaluation.validation_batches or None
                 loss, perplexity, tokens = evaluate_loss(
                     model, TokenStream(config.data.eval_bin, model_config.context_length,
-                                       training.micro_batch_size, training.seed + 2),
+                                       training.micro_batch_size, training.seed + 2, 1),
                     device, limit, training.precision,
                 )
                 peak_vram = torch.cuda.max_memory_allocated() / 2**30 if device.type == "cuda" else 0.0
@@ -168,7 +198,7 @@ def train(config: ExperimentConfig, device_name: str = "cuda", resume: str | Non
         limit = config.evaluation.validation_batches or None
         loss, perplexity, tokens = evaluate_loss(
             model, TokenStream(config.data.eval_bin, model_config.context_length,
-                               training.micro_batch_size, training.seed + 2),
+                               training.micro_batch_size, training.seed + 2, 1),
             device, limit, training.precision,
         )
         peak_vram = torch.cuda.max_memory_allocated() / 2**30 if device.type == "cuda" else 0.0

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
+import math
 import json
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,13 @@ class ModelConfig:
     final_norm: ComponentSpec
     output_head: ComponentSpec
     initialization: ComponentSpec
+    num_mtp_heads: int = 1
+    mtp_loss_weight: float = 0.1
+    mtp_bottleneck_rank: int = 128
+    mtp_head_type: str = "low_rank_xielu"
+    mtp_position_fraction: float = 0.5
+    mtp_active_steps: int = 1000
+    mtp_alternating_parity: bool = True
 
     @classmethod
     def from_dict(cls, value: JsonObject) -> "ModelConfig":
@@ -82,7 +90,7 @@ class ModelConfig:
             "output_head", "initialization",
         }
         missing = required - set(value)
-        unknown = set(value) - required
+        unknown = set(value) - required - {"num_mtp_heads", "mtp_loss_weight", "mtp_bottleneck_rank", "mtp_head_type", "mtp_position_fraction", "mtp_active_steps", "mtp_alternating_parity"}
         if missing: raise ValueError(f"missing model keys: {sorted(missing)}")
         if unknown: raise ValueError(f"unknown model keys: {sorted(unknown)}")
         if not isinstance(value["class"], str): raise ValueError("model.class must be a string")
@@ -99,6 +107,30 @@ class ModelConfig:
             for index, raw in enumerate(value["layers"])
             for layer in LayerSpec.expand(raw, index)
         )
+        num_mtp_heads = value.get("num_mtp_heads", 1)
+        if not isinstance(num_mtp_heads, int) or isinstance(num_mtp_heads, bool) or not 1 <= num_mtp_heads <= 32:
+            raise ValueError("model.num_mtp_heads must be an integer in [1, 32]")
+        mtp_loss_weight = value.get("mtp_loss_weight", 0.1)
+        if (not isinstance(mtp_loss_weight, (int, float)) or isinstance(mtp_loss_weight, bool)
+                or not math.isfinite(mtp_loss_weight) or mtp_loss_weight < 0):
+            raise ValueError("model.mtp_loss_weight must be a finite non-negative number")
+        mtp_bottleneck_rank = value.get("mtp_bottleneck_rank", 128)
+        if (not isinstance(mtp_bottleneck_rank, int) or isinstance(mtp_bottleneck_rank, bool)
+                or mtp_bottleneck_rank <= 0):
+            raise ValueError("model.mtp_bottleneck_rank must be a positive integer")
+        mtp_head_type = value.get("mtp_head_type", "low_rank_xielu")
+        if mtp_head_type not in {"low_rank_xielu", "full_width"}:
+            raise ValueError("model.mtp_head_type must be low_rank_xielu or full_width")
+        mtp_position_fraction = value.get("mtp_position_fraction", 0.5)
+        if (not isinstance(mtp_position_fraction, (int, float)) or isinstance(mtp_position_fraction, bool)
+                or not math.isfinite(mtp_position_fraction) or not 0 < mtp_position_fraction <= 1):
+            raise ValueError("model.mtp_position_fraction must be in (0, 1]")
+        mtp_active_steps = value.get("mtp_active_steps", 1000)
+        if not isinstance(mtp_active_steps, int) or isinstance(mtp_active_steps, bool) or mtp_active_steps < 0:
+            raise ValueError("model.mtp_active_steps must be a non-negative integer")
+        mtp_alternating_parity = value.get("mtp_alternating_parity", True)
+        if not isinstance(mtp_alternating_parity, bool):
+            raise ValueError("model.mtp_alternating_parity must be boolean")
         return cls(
             value["class"], value["vocab_size"], value["context_length"], value["d_model"],
             value["tie_embeddings"],
@@ -107,6 +139,9 @@ class ModelConfig:
             ComponentSpec.from_dict(value["final_norm"], "model.final_norm"),
             ComponentSpec.from_dict(value["output_head"], "model.output_head"),
             ComponentSpec.from_dict(value["initialization"], "model.initialization"),
+            num_mtp_heads, float(mtp_loss_weight), mtp_bottleneck_rank, mtp_head_type,
+            float(mtp_position_fraction),
+            mtp_active_steps, mtp_alternating_parity,
         )
 
     def to_dict(self) -> JsonObject:
@@ -120,6 +155,13 @@ class ModelConfig:
             "final_norm": self.final_norm.to_dict(),
             "output_head": self.output_head.to_dict(),
             "initialization": self.initialization.to_dict(),
+            "num_mtp_heads": self.num_mtp_heads,
+            "mtp_loss_weight": self.mtp_loss_weight,
+            "mtp_bottleneck_rank": self.mtp_bottleneck_rank,
+            "mtp_head_type": self.mtp_head_type,
+            "mtp_position_fraction": self.mtp_position_fraction,
+            "mtp_active_steps": self.mtp_active_steps,
+            "mtp_alternating_parity": self.mtp_alternating_parity,
         }
 
 

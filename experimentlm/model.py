@@ -1116,6 +1116,42 @@ class SwiGLU(MLP):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.dropout(self.down(F.silu(self.gate(x)) * self.up(x)))
 
+def _apply_xielu(x: torch.Tensor, theta_p: torch.Tensor, theta_n: torch.Tensor) -> torch.Tensor:
+    negative_x = torch.expm1(torch.clamp_max(x, 0.0)) - x
+    return torch.where(
+        x > 0,
+        F.softplus(theta_p) * x.square() + 0.5 * x,
+        (0.5 + F.softplus(theta_n)) * negative_x + 0.5 * x,
+    )
+
+
+@MLPS.register
+class XIELU(MLP):
+    def __init__(self, d_model, d_ff, alpha_p=0.8, alpha_n=0.8, bias=False, dropout=0.0):
+        super().__init__(); self.up=nn.Linear(d_model,d_ff,bias=bias); self.down=nn.Linear(d_ff,d_model,bias=bias)
+        self.down.residual_projection=True; self.dropout=nn.Dropout(dropout)
+        self.theta_p=nn.Parameter(torch.tensor(math.log(math.expm1(alpha_p))))
+        self.theta_n=nn.Parameter(torch.tensor(math.log(math.expm1(alpha_n-0.5))))
+    def forward(self, x):
+        x = _apply_xielu(self.up(x), self.theta_p, self.theta_n)
+        return self.dropout(self.down(x))
+
+
+class LowRankXIELUMTPHead(nn.Module):
+    """Nonlinear low-rank future-token head with an untied vocab projection."""
+    def __init__(self, d_model: int, vocab_size: int, rank: int,
+                 alpha_p: float = 0.8, alpha_n: float = 0.8):
+        super().__init__()
+        if rank <= 0:
+            raise ValueError("MTP bottleneck rank must be positive")
+        self.in_proj = nn.Linear(d_model, rank, bias=False)
+        self.theta_p = nn.Parameter(torch.tensor(math.log(math.expm1(alpha_p))))
+        self.theta_n = nn.Parameter(torch.tensor(math.log(math.expm1(alpha_n - 0.5))))
+        self.out_proj = nn.Linear(rank, vocab_size, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.out_proj(_apply_xielu(self.in_proj(x), self.theta_p, self.theta_n))
+
 
 @RESIDUALS.register
 class StandardResidual(Residual):
@@ -1271,10 +1307,36 @@ class CausalLM(nn.Module):
             config.output_head.class_name, config.d_model, config.vocab_size,
             **config.output_head.args,
         )
+        self.num_mtp_heads = config.num_mtp_heads
+        self.mtp_loss_weight = config.mtp_loss_weight
+        self.mtp_bottleneck_rank = config.mtp_bottleneck_rank
+        self.mtp_head_type = config.mtp_head_type
+        self.mtp_position_fraction = config.mtp_position_fraction
+        self.mtp_active_steps = config.mtp_active_steps
+        self.mtp_alternating_parity = config.mtp_alternating_parity
+        self.register_buffer("_mtp_loss_weight", torch.tensor(config.mtp_loss_weight), persistent=False)
+        # Default Linear initialization consumes RNG state. Keep auxiliary
+        # construction from changing the shared trunk's deterministic
+        # initialization, so standard evaluation is identical with MTP on or
+        # off under the same seed.
+        rng_state = torch.get_rng_state()
+        if config.mtp_head_type == "low_rank_xielu":
+            self.mtp_heads = nn.ModuleList([
+                LowRankXIELUMTPHead(config.d_model, config.vocab_size, config.mtp_bottleneck_rank)
+                for _ in range(max(0, config.num_mtp_heads - 1))
+            ])
+        else:
+            self.mtp_heads = nn.ModuleList([
+                nn.Sequential(nn.LayerNorm(config.d_model), nn.Linear(config.d_model, config.d_model, bias=False))
+                for _ in range(max(0, config.num_mtp_heads - 1))
+            ])
+        torch.set_rng_state(rng_state)
         for parameter in self.wte.parameters():
             set_optimizer_policy(parameter, "adamw", "token_embedding")
         for parameter in self.lm_head.parameters():
             set_optimizer_policy(parameter, "adamw", "output_head")
+        for parameter in self.mtp_heads.parameters():
+            set_optimizer_policy(parameter, "adamw", "mtp_auxiliary_head")
         if config.tie_embeddings:
             if self.lm_head.weight.shape != self.wte.weight.shape:
                 raise ValueError("input embedding and output head weights cannot be tied")
@@ -1284,7 +1346,10 @@ class CausalLM(nn.Module):
         initializer.apply(self, len(self.blocks))
 
     def forward(self, input_ids: torch.Tensor, labels: torch.Tensor | None = None,
-                attention_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor | None]:
+                attention_mask: torch.Tensor | None = None,
+                mtp_step: int | None = None,
+                mtp_active: bool | None = None,
+                mtp_parity: int | None = None) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Return logits and loss against already-next-token-aligned labels.
 
         ``labels[:, t]`` is the target for ``input_ids[:, t]``.  Callers
@@ -1297,10 +1362,88 @@ class CausalLM(nn.Module):
         x = self.wte(input_ids)
         for block in self.blocks:
             x = block(x, attention_mask, self.position_encoding)
-        logits = self.lm_head(self.norm_f(x))
-        loss = None if labels is None else F.cross_entropy(
-            logits.float().reshape(-1, logits.size(-1)), labels.reshape(-1)
-        )
+        hidden = self.norm_f(x)
+        if labels is None:
+            logits = self.lm_head(hidden)
+            return logits, None
+        if labels.dim() == 2:
+            # A 2-D label tensor is the framework's standard LM/evaluation
+            # contract.  MTP training supplies [horizon, batch, sequence].
+            logits = self.lm_head(hidden)
+            loss = F.cross_entropy(
+                logits.float().reshape(-1, logits.size(-1)), labels.reshape(-1), ignore_index=-100,
+            )
+            self.last_horizon_losses = (loss.detach(),)
+            self.last_mtp_aux_loss = None
+            return logits, loss
+        if labels.size(0) != self.num_mtp_heads:
+            raise ValueError(f"labels must contain {self.num_mtp_heads} horizon(s)")
+        logits = self.lm_head(hidden)
+        if self.num_mtp_heads == 2 and self.mtp_head_type == "full_width":
+            if mtp_active is None:
+                mtp_active = mtp_step is None or mtp_step < self.mtp_active_steps
+            h1_loss = F.cross_entropy(logits.float().reshape(-1, logits.size(-1)), labels[0].reshape(-1), ignore_index=-100)
+            if not mtp_active:
+                self.last_horizon_losses = (h1_loss.detach(),)
+                self.last_mtp_aux_loss = None
+                self.last_mtp_positions_used = None
+                self.last_mtp_positions_total = None
+                self.last_mtp_selected_indices = None
+                return logits, h1_loss
+            # H1 uses every valid position. H2 uses a deterministic stride-2
+            # subset of valid H2 positions, selected before the auxiliary
+            # full-width projection and vocabulary GEMM.
+            h2_labels = labels[1].reshape(-1)
+            valid_indices = h2_labels.ne(-100).nonzero(as_tuple=False).flatten()
+            if self.mtp_position_fraction == 0.5 and self.mtp_alternating_parity:
+                parity = (0 if mtp_step is None else mtp_step % 2) if mtp_parity is None else mtp_parity
+                position_parity = torch.arange(labels.size(-1), device=labels.device).remainder(2)
+                selected_indices = (labels[1].ne(-100)
+                                    & (position_parity[None, :] == parity)).reshape(-1).nonzero(as_tuple=False).flatten()
+            elif self.mtp_position_fraction == 0.5:
+                selected_indices = valid_indices[::2]
+            elif self.mtp_position_fraction == 1.0:
+                selected_indices = valid_indices
+            else:
+                selected_count = max(1, math.ceil(valid_indices.numel() * self.mtp_position_fraction)) if valid_indices.numel() else 0
+                selected_indices = valid_indices[torch.linspace(
+                    0, valid_indices.numel() - 1, selected_count, device=hidden.device,
+                ).round().long()] if selected_count else valid_indices
+            flat_hidden = hidden.reshape(-1, hidden.size(-1))
+            if selected_indices.numel():
+                h2_hidden = self.mtp_heads[0](flat_hidden.index_select(0, selected_indices))
+                h2_logits = self.lm_head(h2_hidden)
+                h2_loss = F.cross_entropy(h2_logits.float(), h2_labels.index_select(0, selected_indices))
+            else:
+                h2_loss = logits.float().sum() * 0.0
+            self.last_horizon_losses = (h1_loss.detach(), h2_loss.detach())
+            self.last_mtp_aux_loss = h2_loss.detach()
+            self.last_mtp_positions_used = int(selected_indices.numel())
+            self.last_mtp_positions_total = int(valid_indices.numel())
+            self.last_mtp_selected_indices = selected_indices.detach()
+            loss = h1_loss + self._mtp_loss_weight.to(hidden.device) * h2_loss
+            return logits, loss
+        if self.num_mtp_heads > 1 and self.mtp_head_type == "full_width":
+            # Legacy comparison path: the former full-width auxiliary head
+            # followed by the shared vocabulary projection.
+            aux_hidden = torch.stack([head(hidden) for head in self.mtp_heads], dim=0)
+            all_hidden = torch.cat((hidden.unsqueeze(0), aux_hidden), dim=0)
+            all_logits = self.lm_head(all_hidden.flatten(0, 2)).view(
+                self.num_mtp_heads, *hidden.shape[:2], self.lm_head.out_features
+            )
+            logits, *horizon_logits = all_logits.unbind(0)
+            horizon_logits = (logits, *horizon_logits)
+        elif self.num_mtp_heads > 1:
+            # Low-rank heads own their vocabulary projections and therefore
+            # cannot share the LM-head GEMM with H1.
+            horizon_logits = (logits, *(head(hidden) for head in self.mtp_heads))
+        else:
+            horizon_logits = (logits,)
+        losses = [F.cross_entropy(item.float().reshape(-1, logits.size(-1)), labels[h].reshape(-1), ignore_index=-100) for h, item in enumerate(horizon_logits)]
+        aux_loss = torch.stack(losses[1:]).mean() if len(losses) > 1 else hidden.new_zeros(())
+        loss = losses[0] + self._mtp_loss_weight.to(hidden.device) * aux_loss
+        self.last_horizon_losses = tuple(item.detach() for item in losses)
+        self.last_mtp_aux_loss = aux_loss.detach()
         return logits, loss
 
     def forward_cached(self, input_ids: torch.Tensor, cache: dict | None = None):

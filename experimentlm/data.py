@@ -3,8 +3,9 @@ import torch
 from torch.utils.data import IterableDataset
 
 class TokenStream(IterableDataset):
-    def __init__(self, path, context_length, batch_size, seed=12345):
+    def __init__(self, path, context_length, batch_size, seed=12345, prediction_horizons=1):
         self.path, self.context_length, self.batch_size, self.seed = path, context_length, batch_size, seed
+        self.prediction_horizons = prediction_horizons
         self.tokens = np.memmap(path, dtype=np.uint16, mode="r")
         self.num_sequences = max(0, (len(self.tokens) - 1) // context_length)
         # Generate the order once. This is identical on every iteration and
@@ -20,5 +21,15 @@ class TokenStream(IterableDataset):
             # Vectorized indexing replaces one Python/memmap slice per
             # sequence and produces the same [batch, context] layout.
             x = np.take(self.tokens, indices).astype(np.int64, copy=False)
-            y = np.take(self.tokens, indices + 1).astype(np.int64, copy=False)
-            yield torch.from_numpy(x), torch.from_numpy(y)
+            valid = indices + self.prediction_horizons < len(self.tokens)
+            if self.prediction_horizons == 1:
+                y = np.take(self.tokens, np.minimum(indices + 1, len(self.tokens) - 1)).astype(np.int64, copy=False)
+                y[~valid] = -100
+                yield torch.from_numpy(x), torch.from_numpy(y)
+            else:
+                ys = []
+                for h in range(1, self.prediction_horizons + 1):
+                    y = np.take(self.tokens, np.minimum(indices + h, len(self.tokens) - 1)).astype(np.int64, copy=False)
+                    y[indices + h >= len(self.tokens)] = -100
+                    ys.append(y)
+                yield torch.from_numpy(x), torch.from_numpy(np.stack(ys))
